@@ -3,6 +3,21 @@ node_modules/
 package-lock.json
 yarn.lock
 
+node_modules/
+package-lock.json
+
+.env
+backend/.env
+frontend/.env
+
+npm-debug.log*
+*.log
+.DS_Store
+
+
+
+
+
 # Environment variables
 .env
 .env.local

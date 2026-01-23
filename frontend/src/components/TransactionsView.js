@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import API_URL from '../config';
 
 function TransactionsView() {
   const [transactions, setTransactions] = useState([]);
@@ -19,7 +20,7 @@ function TransactionsView() {
     setLoading(true);
     setError(null);
     try {
-      const response = await axios.get('/api/transactions');
+      const response = await axios.get(`${API_URL}/api/transactions`);
       setTransactions(response.data.data);
     } catch (err) {
       setError('Failed to fetch transactions: ' + err.message);
