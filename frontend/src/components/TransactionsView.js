@@ -8,6 +8,8 @@ function TransactionsView() {
   const [error, setError] = useState(null);
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  const [startTime, setStartTime] = useState('00:00');
+  const [endTime, setEndTime] = useState('23:59');
   const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
   const [expandedMessages, setExpandedMessages] = useState({});
   const [channel, setChannel] = useState('all'); 
@@ -41,6 +43,8 @@ function TransactionsView() {
       const response = await axios.post(`${API_URL}/api/transactions/filter`, {
         startDate,
         endDate,
+        startTime,
+        endTime,
         channel,
       });
       setTransactions(response.data.data);
@@ -54,8 +58,45 @@ function TransactionsView() {
   const clearFilter = () => {
     setStartDate('');
     setEndDate('');
+    setStartTime('00:00');
+    setEndTime('23:59');
     setChannel('all');
     fetchTransactions();
+  };
+
+  // Quick filter presets
+  const setTodayMorning = () => {
+    const today = new Date().toISOString().split('T')[0];
+    setStartDate(today);
+    setEndDate(today);
+    setStartTime('00:00');
+    setEndTime('12:00');
+  };
+
+  const setTodayAfternoon = () => {
+    const today = new Date().toISOString().split('T')[0];
+    setStartDate(today);
+    setEndDate(today);
+    setStartTime('12:00');
+    setEndTime('23:59');
+  };
+
+  const setToday = () => {
+    const today = new Date().toISOString().split('T')[0];
+    setStartDate(today);
+    setEndDate(today);
+    setStartTime('00:00');
+    setEndTime('23:59');
+  };
+
+  const setLastHour = () => {
+    const now = new Date();
+    const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+    
+    setStartDate(oneHourAgo.toISOString().split('T')[0]);
+    setEndDate(now.toISOString().split('T')[0]);
+    setStartTime(oneHourAgo.toTimeString().slice(0, 5));
+    setEndTime(now.toTimeString().slice(0, 5));
   };
 
   // Sorting function
@@ -75,17 +116,15 @@ function TransactionsView() {
       let aValue = a[sortConfig.key];
       let bValue = b[sortConfig.key];
 
-      // Handle null values
       if (!aValue) return 1;
       if (!bValue) return -1;
 
-      // Handle different types
       if (sortConfig.key === 'amount') {
         aValue = parseFloat(aValue) || 0;
         bValue = parseFloat(bValue) || 0;
-      } else if (sortConfig.key === 'receivedDate') {
-        aValue = new Date(aValue);
-        bValue = new Date(bValue);
+      } else if (sortConfig.key === 'receivedTimestamp') {
+        aValue = a.receivedTimestamp || 0;
+        bValue = b.receivedTimestamp || 0;
       } else {
         aValue = aValue.toString().toLowerCase();
         bValue = bValue.toString().toLowerCase();
@@ -164,6 +203,79 @@ function TransactionsView() {
           </div>
         </div>
 
+        {/* Quick Filter Presets */}
+        <div style={{ 
+          background: '#f0f7ff', 
+          padding: '1rem', 
+          borderRadius: '8px',
+          marginBottom: '1.5rem',
+          display: 'flex',
+          gap: '0.5rem',
+          flexWrap: 'wrap'
+        }}>
+          <span style={{ fontWeight: '600', marginRight: '0.5rem' }}>⚡ Quick Filters:</span>
+          <button 
+            onClick={setToday}
+            style={{
+              padding: '0.5rem 1rem',
+              background: 'white',
+              border: '2px solid #667eea',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              fontSize: '0.9rem',
+              fontWeight: '600',
+              color: '#667eea'
+            }}
+          >
+            📅 Today
+          </button>
+          <button 
+            onClick={setTodayMorning}
+            style={{
+              padding: '0.5rem 1rem',
+              background: 'white',
+              border: '2px solid #f59e0b',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              fontSize: '0.9rem',
+              fontWeight: '600',
+              color: '#f59e0b'
+            }}
+          >
+            🌅 Morning (00:00-12:00)
+          </button>
+          <button 
+            onClick={setTodayAfternoon}
+            style={{
+              padding: '0.5rem 1rem',
+              background: 'white',
+              border: '2px solid #f59e0b',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              fontSize: '0.9rem',
+              fontWeight: '600',
+              color: '#f59e0b'
+            }}
+          >
+            🌆 Afternoon (12:00-23:59)
+          </button>
+          <button 
+            onClick={setLastHour}
+            style={{
+              padding: '0.5rem 1rem',
+              background: 'white',
+              border: '2px solid #48bb78',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              fontSize: '0.9rem',
+              fontWeight: '600',
+              color: '#48bb78'
+            }}
+          >
+            ⏰ Last Hour
+          </button>
+        </div>
+
         <div className="date-range-picker">
           <div className="input-group">
             <label>Start Date</label>
@@ -174,11 +286,41 @@ function TransactionsView() {
             />
           </div>
           <div className="input-group">
+            <label>Start Time</label>
+            <input
+              type="time"
+              value={startTime}
+              onChange={(e) => setStartTime(e.target.value)}
+              style={{
+                width: '100%',
+                padding: '0.75rem',
+                border: '2px solid #e0e0e0',
+                borderRadius: '8px',
+                fontSize: '1rem'
+              }}
+            />
+          </div>
+          <div className="input-group">
             <label>End Date</label>
             <input
               type="date"
               value={endDate}
               onChange={(e) => setEndDate(e.target.value)}
+            />
+          </div>
+          <div className="input-group">
+            <label>End Time</label>
+            <input
+              type="time"
+              value={endTime}
+              onChange={(e) => setEndTime(e.target.value)}
+              style={{
+                width: '100%',
+                padding: '0.75rem',
+                border: '2px solid #e0e0e0',
+                borderRadius: '8px',
+                fontSize: '1rem'
+              }}
             />
           </div>
           <div className="input-group">
@@ -202,14 +344,13 @@ function TransactionsView() {
               <option value="iphone">IPHONE</option>
             </select>
           </div>
-          <div>
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-end' }}>
             <button className="button-primary" onClick={filterByDateRange}>
               🔍 Filter
             </button>
             <button
               className="button-secondary"
               onClick={clearFilter}
-              style={{ marginLeft: '1rem' }}
             >
               🔄 Reset
             </button>
@@ -249,8 +390,8 @@ function TransactionsView() {
                   <th onClick={() => handleSort('amount')} style={{ cursor: 'pointer' }}>
                     Amount <SortIcon columnKey="amount" />
                   </th>
-                  <th onClick={() => handleSort('receivedDate')} style={{ cursor: 'pointer' }}>
-                    Date <SortIcon columnKey="receivedDate" />
+                  <th onClick={() => handleSort('receivedTimestamp')} style={{ cursor: 'pointer' }}>
+                    Date & Time <SortIcon columnKey="receivedTimestamp" />
                   </th>
                   <th>Message</th>
                   <th>Transaction ID</th>
@@ -278,7 +419,16 @@ function TransactionsView() {
                       <td style={{ fontWeight: '600' }}>
                         TZS {(transaction.amount || 0).toLocaleString()}
                       </td>
-                      <td>{transaction.receivedDate || '-'}</td>
+                      <td>
+                        <div style={{ fontSize: '0.9rem' }}>
+                          {transaction.receivedDate || '-'}
+                        </div>
+                        {transaction.receivedTime && (
+                          <div style={{ fontSize: '0.75rem', color: '#667eea', fontWeight: '600' }}>
+                            🕐 {transaction.receivedTime}
+                          </div>
+                        )}
+                      </td>
                       <td
                         onClick={() => toggleMessage(transaction.id)}
                         style={{

@@ -9,7 +9,6 @@ const app = express();
 const port = process.env.PORT || 5000;
 
 // Middleware
-// app.use(cors());
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
@@ -39,58 +38,59 @@ async function getGoogleSheetsClient() {
   return google.sheets({ version: 'v4', auth: client });
 }
 
-// // Fetch transactions from Google Sheets
-// async function fetchTransactions(sheetName, channel) {
-//   try {
-//     const sheets = await getGoogleSheetsClient();
-//     const response = await sheets.spreadsheets.values.get({
-//       spreadsheetId: SPREADSHEET_ID,
-//       range: `${sheetName}!A2:H`, // Adjust based on your sheet structure
-//     });
+// Parse EAT DateTime from Google Sheets format: "22 Jan 2026, 05:16 pm (EAT)"
+function parseEATDateTime(rawDate) {
+  if (!rawDate) return { display: null, timestamp: null, dateOnly: null, timeOnly: null };
 
-//     const rows = response.data.values || [];
+  try {
+    // Example: "22 Jan 2026, 05:16 pm (EAT)"
+    const parts = rawDate.split(',').map(s => s.trim());
     
-//     return rows.map((row, index) => {
-//       // Parse date better - handle "22 Jan 2026, 06:23 pm (EAT)" format
-//       let parsedDate = null;
-//       if (row[2]) {
-//         // Extract just the date part before the comma
-//         const datePart = row[2].split(',')[0].trim(); // "22 Jan 2026"
-//         parsedDate = new Date(datePart);
-        
-//         // If that fails, try the full string
-//         if (isNaN(parsedDate)) {
-//           parsedDate = new Date(row[2]);
-//         }
-        
-//         // Format as YYYY-MM-DD for consistency
-//         if (!isNaN(parsedDate)) {
-//           parsedDate = parsedDate.toISOString().split('T')[0];
-//         } else {
-//           parsedDate = row[2]; // Keep original if parsing fails
-//         }
-//       }
+    if (parts.length < 2) {
+      // No time, just date
+      const dateOnly = parts[0]; // "22 Jan 2026"
+      const parsed = new Date(`${dateOnly} 00:00:00 GMT+0300`);
       
-//       return {
-//         id: row[0] || `${channel}-${index + 1}`,
-//         channel: channel,
-//         customerName: row[5] || null, // CONTRACT NAME column
-//         customerPhone: row[4] || null, // SENDER CONTACTS column
-//         contractName: row[5] || null, // CONTRACT NAME column
-//         amount: parseFloat(row[6]) || null, // AMOUNT column
-//         receivedDate: parsedDate, // RECEIVED DATE - now properly parsed!
-//         transactionId: row[7] || null, // TRANSACTION ID
-//         transactionMessage: row[3] || null, // TRANSACTION MESSAGE
-//         paymentChannel: row[1] || null, // CHANNEL (M-PESA or MIXX BY YAS)
-//       };
-//     });
-//   } catch (error) {
-//     console.error(`Error fetching from ${sheetName}:`, error);
-//     throw error;
-//   }
-// }
+      return {
+        display: dateOnly,
+        timestamp: parsed.getTime(),
+        dateOnly: dateOnly,
+        timeOnly: '00:00'
+      };
+    }
 
-// FAST & SAFE Google Sheets fetcher (EAT + invoice-safe)
+    const datePart = parts[0]; // "22 Jan 2026"
+    const timePart = parts[1].replace(/\s*\(EAT\)/, '').trim(); // "05:16 pm"
+
+    // Parse to EAT timezone (GMT+3) to avoid date shifts
+    const dateTimeStr = `${datePart} ${timePart} GMT+0300`;
+    const parsed = new Date(dateTimeStr);
+
+    if (isNaN(parsed)) {
+      console.warn('Failed to parse date:', rawDate);
+      return { display: rawDate, timestamp: null, dateOnly: datePart, timeOnly: null };
+    }
+
+    // Extract time in HH:mm format
+    const hours = String(parsed.getHours()).padStart(2, '0');
+    const minutes = String(parsed.getMinutes()).padStart(2, '0');
+    const timeOnly = `${hours}:${minutes}`;
+
+    return {
+      display: `${datePart}, ${timePart}`,
+      timestamp: parsed.getTime(),
+      dateOnly: datePart,
+      timeOnly: timeOnly,
+      iso: parsed.toISOString()
+    };
+
+  } catch (error) {
+    console.error('Error parsing date:', rawDate, error);
+    return { display: rawDate, timestamp: null, dateOnly: null, timeOnly: null };
+  }
+}
+
+// Fetch transactions from Google Sheets with TIME support
 async function fetchTransactions(sheetName, channel) {
   try {
     const sheets = await getGoogleSheetsClient();
@@ -102,36 +102,15 @@ async function fetchTransactions(sheetName, channel) {
     });
 
     const rows = data.values || [];
-    const results = new Array(rows.length);
+    const results = [];
 
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
 
-      // ---- DATE NORMALIZATION ----
-      let rawDate = row[2] || null;
-      let dateLabel = null;
-      let dateKey = null;
+      // Parse DateTime with TIME support
+      const dateTime = parseEATDateTime(row[2]);
 
-      if (rawDate) {
-        // 1️⃣ Strip time + timezone fast
-        dateLabel = rawDate.split(',')[0].trim();
-
-        // 2️⃣ Normalize formats without UTC shift
-        // Supports: "22 Jan 2026", "22/01/2026", "2026-01-22"
-        const d = dateLabel.includes('/')
-          ? dateLabel.split('/').reverse().join('-')
-          : dateLabel;
-
-        const parsed = new Date(`${d} 00:00:00 GMT+0300`);
-        if (!isNaN(parsed)) {
-          const y = parsed.getFullYear();
-          const m = String(parsed.getMonth() + 1).padStart(2, '0');
-          const day = String(parsed.getDate()).padStart(2, '0');
-          dateKey = `${y}-${m}-${day}`;
-        }
-      }
-
-      results[i] = {
+      results.push({
         id: row[7] || `${channel}-${i + 1}`,
         channel,
 
@@ -144,12 +123,15 @@ async function fetchTransactions(sheetName, channel) {
 
         amount: row[6] ? Number(row[6]) : null,
 
-        receivedRaw: rawDate,
-        receivedDate: dateLabel,
-        receivedDateKey: dateKey,
+        // NEW: Full DateTime info
+        receivedRaw: row[2], // "22 Jan 2026, 05:16 pm (EAT)"
+        receivedDate: dateTime.dateOnly, // "22 Jan 2026"
+        receivedTime: dateTime.timeOnly, // "17:16" (24-hour format)
+        receivedDateTime: dateTime.display, // "22 Jan 2026, 05:16 pm"
+        receivedTimestamp: dateTime.timestamp, // Unix timestamp for filtering
 
         transactionId: row[7] || null,
-      };
+      });
     }
 
     return results;
@@ -160,10 +142,9 @@ async function fetchTransactions(sheetName, channel) {
   }
 }
 
-
 // API Routes
 
-// Get all transactions from all sheets
+// Get all transactions
 app.get('/api/transactions', async (req, res) => {
   try {
     const bodaTransactions = await fetchTransactions('DEV-BODA_LEDGER', 'boda');
@@ -190,10 +171,10 @@ app.get('/api/transactions', async (req, res) => {
   }
 });
 
-// Get transactions filtered by date range
+// Filter transactions by DATE + TIME range
 app.post('/api/transactions/filter', async (req, res) => {
   try {
-    const { startDate, endDate, channel } = req.body;
+    const { startDate, endDate, startTime, endTime, channel } = req.body;
 
     const bodaTransactions = await fetchTransactions('DEV-BODA_LEDGER', 'boda');
     const iphoneTransactions = await fetchTransactions('DEV-IPHONE_MIXX', 'iphone');
@@ -205,41 +186,44 @@ app.post('/api/transactions/filter', async (req, res) => {
       ...lipaTransactions,
     ];
 
-    // Filter by date range if provided
-    // Filter transactions by date range
+    // Filter by DATE + TIME range
     if (startDate && endDate) {
-      const start = new Date(startDate);
-      start.setHours(0, 0, 0, 0);
-      const end = new Date(endDate);
-      end.setHours(23, 59, 59, 999);
+      const startTimeStr = startTime || '00:00';
+      const endTimeStr = endTime || '23:59';
       
-      console.log('=== Payment Processing ===');
-      console.log('Date range:', { startDate, endDate, start, end });
+      // Create timestamps in EAT (GMT+3) to avoid date shifts
+      const startTimestamp = new Date(`${startDate} ${startTimeStr}:00 GMT+0300`).getTime();
+      const endTimestamp = new Date(`${endDate} ${endTimeStr}:59 GMT+0300`).getTime();
+      
+      console.log('=== DateTime Filter ===');
+      console.log('Start:', new Date(startTimestamp).toISOString());
+      console.log('End:', new Date(endTimestamp).toISOString());
       console.log('Total transactions before filter:', allTransactions.length);
       
       allTransactions = allTransactions.filter(transaction => {
-        if (!transaction.receivedDate) return false;
-        const transDate = new Date(transaction.receivedDate);
-        const isInRange = transDate >= start && transDate <= end;
+        if (!transaction.receivedTimestamp) return false;
+        
+        const isInRange = transaction.receivedTimestamp >= startTimestamp && 
+                         transaction.receivedTimestamp <= endTimestamp;
+        
         if (isInRange) {
-          console.log('✓ Matched transaction:', {
-            date: transaction.receivedDate,
+          console.log('✓ Matched:', {
+            dateTime: transaction.receivedDateTime,
             customer: transaction.customerName || transaction.contractName,
             amount: transaction.amount
           });
         }
+        
         return isInRange;
       });
       
       console.log('Total transactions after filter:', allTransactions.length);
     }
 
-    // Filter by channel if provided
+    // Filter by channel
     if (channel && channel !== 'all') {
       console.log('Filtering by channel:', channel);
-      allTransactions = allTransactions.filter(transaction => {
-        return transaction.channel === channel;
-      });
+      allTransactions = allTransactions.filter(transaction => transaction.channel === channel);
       console.log('After channel filter:', allTransactions.length);
     }
 
@@ -308,9 +292,8 @@ app.post('/api/invoices/upload', upload.single('file'), (req, res) => {
 // Process invoice payments
 app.post('/api/process-payments', async (req, res) => {
   try {
-      const { invoices, startDate, endDate, channel } = req.body;
+    const { invoices, startDate, endDate, startTime, endTime, channel } = req.body;
 
-    // Fetch transactions within date range
     const bodaTransactions = await fetchTransactions('DEV-BODA_LEDGER', 'boda');
     const iphoneTransactions = await fetchTransactions('DEV-IPHONE_MIXX', 'iphone');
     const lipaTransactions = await fetchTransactions('DEV-LIPA_MIXX', 'lipa');
@@ -321,35 +304,28 @@ app.post('/api/process-payments', async (req, res) => {
       ...lipaTransactions,
     ];
 
-    // Filter transactions by date range
+    // Filter by DATE + TIME range
     if (startDate && endDate) {
-      const start = new Date(startDate);
-      const end = new Date(endDate);
+      const startTimeStr = startTime || '00:00';
+      const endTimeStr = endTime || '23:59';
+      
+      const startTimestamp = new Date(`${startDate} ${startTimeStr}:00 GMT+0300`).getTime();
+      const endTimestamp = new Date(`${endDate} ${endTimeStr}:59 GMT+0300`).getTime();
       
       allTransactions = allTransactions.filter(transaction => {
-        if (!transaction.receivedDate) return false;
-        const transDate = new Date(transaction.receivedDate);
-        return transDate >= start && transDate <= end;
+        if (!transaction.receivedTimestamp) return false;
+        return transaction.receivedTimestamp >= startTimestamp && 
+               transaction.receivedTimestamp <= endTimestamp;
       });
     }
 
+    // Filter by channel
     if (channel && channel !== 'all') {
-      console.log('Filtering by channel:', channel);
-      allTransactions = allTransactions.filter(transaction => {
-        return transaction.channel === channel;
-      });
-      console.log('After channel filter:', allTransactions.length);
+      allTransactions = allTransactions.filter(transaction => transaction.channel === channel);
     }
 
-     console.log('Total transactions BEFORE date filter:', allTransactions.length);
-    console.log('Sample transactions:', allTransactions.slice(0, 3).map(t => ({
-      date: t.receivedDate,
-      customer: t.contractName,
-      amount: t.amount
-    })));
+    console.log('Processing with', allTransactions.length, 'transactions');
 
-
-    // Process payments
     const processedInvoices = processInvoicePayments(invoices, allTransactions);
 
     res.json({
@@ -365,20 +341,18 @@ app.post('/api/process-payments', async (req, res) => {
   }
 });
 
-// Helper function to extract phone from customer name
+// Helper function to extract phone
 function extractPhone(customerName) {
   const phoneMatch = customerName.match(/\d{10,}/);
   return phoneMatch ? phoneMatch[0] : null;
 }
 
 // Main payment processing logic
-// Main payment processing logic
 function processInvoicePayments(invoices, transactions) {
   console.log('\n=== Processing Invoice Payments ===');
   console.log('Invoices to process:', invoices.length);
   console.log('Transactions available:', transactions.length);
   
-  // Group invoices by customer
   const invoicesByCustomer = {};
   
   invoices.forEach(invoice => {
@@ -387,12 +361,8 @@ function processInvoicePayments(invoices, transactions) {
       invoicesByCustomer[key] = [];
     }
     invoicesByCustomer[key].push(invoice);
-    console.log('Invoice grouped:', { customer: key, invoice: invoice.invoiceNumber });
   });
 
-  console.log('\nCustomers with invoices:', Object.keys(invoicesByCustomer).length);
-
-  // Sort invoices within each customer group by date, then by invoice number
   Object.keys(invoicesByCustomer).forEach(customerKey => {
     invoicesByCustomer[customerKey].sort((a, b) => {
       const dateCompare = new Date(a.invoiceDate) - new Date(b.invoiceDate);
@@ -401,13 +371,11 @@ function processInvoicePayments(invoices, transactions) {
     });
   });
 
-  // Group transactions by customer
   const transactionsByCustomer = {};
   
   transactions.forEach(transaction => {
     if (!transaction.amount) return;
     
-    // Try multiple matching strategies
     const keys = [
       transaction.customerPhone,
       transaction.contractName?.toLowerCase().trim(),
@@ -419,25 +387,16 @@ function processInvoicePayments(invoices, transactions) {
         transactionsByCustomer[key] = [];
       }
       transactionsByCustomer[key].push(transaction);
-      console.log('Transaction grouped:', { customer: key, amount: transaction.amount });
     });
   });
 
-  console.log('\nCustomers with transactions:', Object.keys(transactionsByCustomer).length);
-
-  // Process payments
   const processedInvoices = [];
 
   Object.keys(invoicesByCustomer).forEach(customerKey => {
     const customerInvoices = invoicesByCustomer[customerKey];
     const customerTransactions = transactionsByCustomer[customerKey] || [];
     
-    console.log(`\n--- Processing customer: ${customerKey} ---`);
-    console.log(`Invoices: ${customerInvoices.length}, Transactions: ${customerTransactions.length}`);
-    
-    // Calculate total available payment
     let availableAmount = customerTransactions.reduce((sum, t) => sum + (t.amount || 0), 0);
-    console.log(`Total available: TZS ${availableAmount}`);
     
     customerInvoices.forEach(invoice => {
       const invoiceAmount = invoice.amount;
@@ -451,13 +410,10 @@ function processInvoicePayments(invoices, transactions) {
         availableAmount = 0;
       }
       
-      console.log(`Invoice ${invoice.invoiceNumber}: Amount ${invoiceAmount}, Paid ${amountPaid}`);
-      
-      // Find matching transaction for payment details
       const matchingTransaction = customerTransactions.find(t => t.amount > 0);
       
       processedInvoices.push({
-        paymentDate: matchingTransaction?.receivedDate || invoice.invoiceDate,
+        paymentDate: matchingTransaction?.receivedDateTime || matchingTransaction?.receivedDate || invoice.invoiceDate,
         customerName: invoice.customerName,
         paymentMethod: 'Cash',
         depositToAccountName: 'Kijichi Collection AC',
@@ -472,9 +428,6 @@ function processInvoicePayments(invoices, transactions) {
       });
     });
   });
-
-  console.log('\n=== Processing Complete ===');
-  console.log('Processed invoices:', processedInvoices.length);
 
   return processedInvoices;
 }
@@ -514,13 +467,13 @@ app.post('/api/export-payments', (req, res) => {
   }
 });
 
-
 // Health check endpoint
 app.get('/', (req, res) => {
   res.json({
     success: true,
     message: 'Invoice Payment API is running!',
-    version: '1.0.0',
+    version: '2.0.0',
+    features: ['DateTime filtering', 'EAT timezone support'],
     endpoints: {
       transactions: '/api/transactions',
       filter: '/api/transactions/filter',
@@ -539,10 +492,6 @@ app.use((req, res) => {
     path: req.path
   });
 });
-
-
-
-
 
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);

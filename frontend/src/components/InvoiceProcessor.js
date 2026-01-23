@@ -3,11 +3,12 @@ import axios from 'axios';
 import Papa from 'papaparse';
 import API_URL from '../config';
 
-
 function InvoiceProcessor() {
   const [invoices, setInvoices] = useState([]);
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  const [startTime, setStartTime] = useState('00:00');
+  const [endTime, setEndTime] = useState('23:59');
   const [channel, setChannel] = useState('all');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -69,6 +70,8 @@ function InvoiceProcessor() {
         invoices,
         startDate,
         endDate,
+        startTime,
+        endTime,
         channel,
       });
 
@@ -81,6 +84,31 @@ function InvoiceProcessor() {
     } finally {
       setLoading(false);
     }
+  };
+
+  // Quick time presets
+  const setTodayMorning = () => {
+    const today = new Date().toISOString().split('T')[0];
+    setStartDate(today);
+    setEndDate(today);
+    setStartTime('00:00');
+    setEndTime('12:00');
+  };
+
+  const setTodayAfternoon = () => {
+    const today = new Date().toISOString().split('T')[0];
+    setStartDate(today);
+    setEndDate(today);
+    setStartTime('12:00');
+    setEndTime('23:59');
+  };
+
+  const setToday = () => {
+    const today = new Date().toISOString().split('T')[0];
+    setStartDate(today);
+    setEndDate(today);
+    setStartTime('00:00');
+    setEndTime('23:59');
   };
 
   const downloadCSV = () => {
@@ -111,7 +139,8 @@ function InvoiceProcessor() {
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `processed_payments_${new Date().toISOString().split('T')[0]}.csv`;
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+    a.download = `processed_payments_${timestamp}.csv`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -166,8 +195,22 @@ function InvoiceProcessor() {
         <h2>💰 Invoice Payment Processor</h2>
         <p style={{ color: '#666', marginBottom: '1rem' }}>
           Upload QuickBooks invoices and process payments using transactions from
-          the selected date range
+          the selected date & time range
         </p>
+
+        {/* Time-based Processing Info */}
+        <div style={{ 
+          background: '#fff3cd', 
+          border: '2px solid #ffc107', 
+          borderRadius: '8px',
+          padding: '1rem',
+          marginBottom: '1.5rem'
+        }}>
+          <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: '600', color: '#856404' }}>
+            ⚡ <strong>NEW:</strong> Process payments multiple times per day! Use time filters to avoid duplicate processing.
+            For example: Process morning payments (00:00-12:00), then afternoon payments (12:00-23:59) separately.
+          </p>
+        </div>
 
         {/* Payment Logic Explanation */}
         <div style={{ 
@@ -181,7 +224,7 @@ function InvoiceProcessor() {
           <ol style={{ marginLeft: '1.5rem', lineHeight: '1.8' }}>
             <li><strong>Groups invoices by customer</strong> (matching by phone or name)</li>
             <li><strong>Sorts invoices</strong> by date (oldest first), then by invoice number</li>
-            <li><strong>Sums all customer transactions</strong> within the selected date range</li>
+            <li><strong>Sums customer transactions</strong> within selected DATE & TIME range</li>
             <li><strong>Allocates payments sequentially:</strong>
               <ul style={{ marginLeft: '1.5rem', marginTop: '0.5rem' }}>
                 <li>Pays first invoice completely if funds available</li>
@@ -345,9 +388,68 @@ function InvoiceProcessor() {
           </div>
         )}
 
-        <div className="date-range-picker" style={{ marginTop: '2rem' }}>
+        {/* Quick Time Presets */}
+        <div style={{ 
+          background: '#f0f7ff', 
+          padding: '1rem', 
+          borderRadius: '8px',
+          marginTop: '1.5rem',
+          marginBottom: '1rem',
+          display: 'flex',
+          gap: '0.5rem',
+          flexWrap: 'wrap'
+        }}>
+          <span style={{ fontWeight: '600', marginRight: '0.5rem' }}>⚡ Quick Time Ranges:</span>
+          <button 
+            onClick={setToday}
+            style={{
+              padding: '0.5rem 1rem',
+              background: 'white',
+              border: '2px solid #667eea',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              fontSize: '0.9rem',
+              fontWeight: '600',
+              color: '#667eea'
+            }}
+          >
+            📅 Today (All)
+          </button>
+          <button 
+            onClick={setTodayMorning}
+            style={{
+              padding: '0.5rem 1rem',
+              background: 'white',
+              border: '2px solid #f59e0b',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              fontSize: '0.9rem',
+              fontWeight: '600',
+              color: '#f59e0b'
+            }}
+          >
+            🌅 Morning
+          </button>
+          <button 
+            onClick={setTodayAfternoon}
+            style={{
+              padding: '0.5rem 1rem',
+              background: 'white',
+              border: '2px solid #f59e0b',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              fontSize: '0.9rem',
+              fontWeight: '600',
+              color: '#f59e0b'
+            }}
+          >
+            🌆 Afternoon
+          </button>
+        </div>
+
+        <div className="date-range-picker" style={{ marginTop: '1rem' }}>
           <div className="input-group">
-            <label>📅 Transaction Start Date</label>
+            <label>📅 Start Date</label>
             <input
               type="date"
               value={startDate}
@@ -355,11 +457,41 @@ function InvoiceProcessor() {
             />
           </div>
           <div className="input-group">
-            <label>📅 Transaction End Date</label>
+            <label>🕐 Start Time</label>
+            <input
+              type="time"
+              value={startTime}
+              onChange={(e) => setStartTime(e.target.value)}
+              style={{
+                width: '100%',
+                padding: '0.75rem',
+                border: '2px solid #e0e0e0',
+                borderRadius: '8px',
+                fontSize: '1rem'
+              }}
+            />
+          </div>
+          <div className="input-group">
+            <label>📅 End Date</label>
             <input
               type="date"
               value={endDate}
               onChange={(e) => setEndDate(e.target.value)}
+            />
+          </div>
+          <div className="input-group">
+            <label>🕐 End Time</label>
+            <input
+              type="time"
+              value={endTime}
+              onChange={(e) => setEndTime(e.target.value)}
+              style={{
+                width: '100%',
+                padding: '0.75rem',
+                border: '2px solid #e0e0e0',
+                borderRadius: '8px',
+                fontSize: '1rem'
+              }}
             />
           </div>
           <div className="input-group">
