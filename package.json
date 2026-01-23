@@ -1,0 +1,24 @@
+{
+  "name": "invoice-payment-system",
+  "version": "1.0.0",
+  "description": "Automated invoice payment reconciliation system",
+  "scripts": {
+    "install:all": "npm install && cd backend && npm install && cd ../frontend && npm install",
+    "start": "concurrently \"npm run start:backend\" \"npm run start:frontend\"",
+    "start:backend": "cd backend && npm start",
+    "start:frontend": "cd frontend && npm start",
+    "build": "cd frontend && npm run build"
+  },
+  "keywords": [
+    "invoice",
+    "payment",
+    "reconciliation",
+    "quickbooks",
+    "google-sheets"
+  ],
+  "author": "Kijichi Collection System",
+  "license": "PRIVATE",
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
