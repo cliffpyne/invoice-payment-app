@@ -20,13 +20,17 @@ function TransactionsView() {
     setLoading(true);
     setError(null);
     try {
-      const response = await axios.get(`${API_URL}/api/transactions`);
-      setTransactions(response.data.data);
-    } catch (err) {
-      setError('Failed to fetch transactions: ' + err.message);
-    } finally {
-      setLoading(false);
-    }
+  const response = await axios.post(`${API_URL}/api/transactions/filter`, {
+    startDate,
+    endDate,
+    channel,
+  });
+  setTransactions(response.data.data);
+} catch (err) {
+  setError('Failed to filter transactions: ' + err.message);
+} finally {
+  setLoading(false);
+}
   };
 
   const filterByDateRange = async () => {

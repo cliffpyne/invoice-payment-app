@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import axios from 'axios';
 import Papa from 'papaparse';
-// import API_URL from '../config';
+import API_URL from '../config';
+
 
 function InvoiceProcessor() {
   const [invoices, setInvoices] = useState([]);
@@ -64,7 +65,7 @@ function InvoiceProcessor() {
     setSuccess(null);
 
     try {
-      const response = await axios.post('/api/process-payments', {
+      const response = await axios.post(`${API_URL}/api/process-payments`, {
         invoices,
         startDate,
         endDate,

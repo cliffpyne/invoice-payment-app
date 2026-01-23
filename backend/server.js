@@ -510,6 +510,36 @@ app.post('/api/export-payments', (req, res) => {
   }
 });
 
+
+// Health check endpoint
+app.get('/', (req, res) => {
+  res.json({
+    success: true,
+    message: 'Invoice Payment API is running!',
+    version: '1.0.0',
+    endpoints: {
+      transactions: '/api/transactions',
+      filter: '/api/transactions/filter',
+      upload: '/api/invoices/upload',
+      process: '/api/process-payments',
+      export: '/api/export-payments'
+    }
+  });
+});
+
+// 404 handler
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    message: 'Endpoint not found',
+    path: req.path
+  });
+});
+
+
+
+
+
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
 });
