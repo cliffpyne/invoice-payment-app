@@ -393,7 +393,8 @@ function processInvoicePayments(invoices, transactions) {
 
   Object.keys(invoicesByCustomer).forEach(customerKey => {
     invoicesByCustomer[customerKey].sort((a, b) => {
-      const dateCompare = new Date(a.invoiceDate) - new Date(b.invoiceDate);
+      // const dateCompare = new Date(a.invoiceDate) - new Date(b.invoiceDate);
+      const dateCompare = new Date(b.invoiceDate) - new Date(a.invoiceDate);
       if (dateCompare !== 0) return dateCompare;
       return a.invoiceNumber.localeCompare(b.invoiceNumber);
     });
