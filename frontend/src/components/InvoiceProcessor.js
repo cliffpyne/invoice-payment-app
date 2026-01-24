@@ -223,12 +223,12 @@ function InvoiceProcessor() {
           <h3 style={{ color: '#667eea', marginBottom: '1rem' }}>🧮 Payment Logic</h3>
           <ol style={{ marginLeft: '1.5rem', lineHeight: '1.8' }}>
             <li><strong>Groups invoices by customer</strong> (matching by phone or name)</li>
-            <li><strong>Sorts invoices</strong> by date (oldest first), then by invoice number</li>
+            <li><strong>Sorts invoices</strong> by date (newest first), then by invoice number</li>
             <li><strong>Sums customer transactions</strong> within selected DATE & TIME range</li>
             <li><strong>Allocates payments sequentially:</strong>
               <ul style={{ marginLeft: '1.5rem', marginTop: '0.5rem' }}>
-                <li>Pays first invoice completely if funds available</li>
-                <li>Remaining funds go to second invoice</li>
+                <li>Pays first invoice or newest invoice first completely if funds available</li>
+                <li>Remaining funds go to second or older invoice</li>
                 <li>Continues until all invoices are paid or funds run out</li>
               </ul>
             </li>
