@@ -437,6 +437,7 @@ function extractPhone(customerName) {
 
 // Main payment processing logic
 // UPDATED: Process payments transaction-by-transaction instead of sum-first
+// UPDATED: Process payments transaction-by-transaction instead of sum-first
 function processInvoicePayments(invoices, transactions) {
   console.log('\n========================================');
   console.log('=== PAYMENT PROCESSING STARTED ===');
