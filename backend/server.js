@@ -1,3 +1,4 @@
+
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
@@ -759,13 +760,12 @@ function processInvoicePayments(invoices, transactions) {
   });
 }
 
-// Start server
-app.listen(port, () => {
+// Start server - bind to 0.0.0.0 for Render deployment
+app.listen(port, '0.0.0.0', () => {
   console.log(`✅ Server running on port ${port}`);
 });
 
 module.exports = { processInvoicePayments };
-
 
 
 
