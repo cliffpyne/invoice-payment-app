@@ -13,7 +13,16 @@ app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
 }));
-app.use(express.json());
+// app.use(express.json());
+// here is my new code to accept more that 65,000 entities 
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
+
+
+
+
+
+
 
 // Configure multer for file uploads
 const upload = multer({ storage: multer.memoryStorage() });
