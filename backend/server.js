@@ -593,20 +593,37 @@ function processInvoicePayments(invoices, transactions) {
       // Get the first transaction for payment date reference
       const matchingTransaction = customerTransactions.length > 0 ? customerTransactions[0] : null;
       
-      processedInvoices.push({
-        paymentDate: matchingTransaction?.receivedDateTime || matchingTransaction?.receivedDate || invoice.invoiceDate,
-        customerName: invoice.customerName,
-        paymentMethod: 'Cash',
-        depositToAccountName: 'Kijichi Collection AC',
-        invoiceNo: invoice.invoiceNumber,
-        journalNo: '',
-        invoiceAmount: invoiceAmount,
-        amount: amountPaid,
-        referenceNo: '',
-        memo: matchingTransaction?.transactionId || '',
-        countryCode: '',
-        exchangeRate: '',
-      });
+
+      // 🔥 Format date as MM-DD-YYYY for QuickBooks
+let formattedDate = invoice.invoiceDate; // Default to invoice date
+if (matchingTransaction?.receivedDateTime) {
+  formattedDate = matchingTransaction.receivedDateTime;
+} else if (matchingTransaction?.receivedDate) {
+  formattedDate = matchingTransaction.receivedDate;
+}
+// Convert to MM-DD-YYYY format if not already
+const dateObj = new Date(formattedDate);
+if (!isNaN(dateObj.getTime())) {
+  const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+  const day = String(dateObj.getDate()).padStart(2, '0');
+  const year = dateObj.getFullYear();
+  formattedDate = `${month}-${day}-${year}`;
+}
+
+processedInvoices.push({
+  paymentDate: formattedDate, // ✅ MM-DD-YYYY format
+  customerName: invoice.customerName, // Will be uppercased during export
+  paymentMethod: 'Cash',
+  depositToAccountName: 'Kijichi Collection AC',
+  invoiceNo: invoice.invoiceNumber,
+  journalNo: '',
+  invoiceAmount: invoiceAmount,
+  amount: amountPaid,
+  referenceNo: '',
+  memo: matchingTransaction?.transactionId || '',
+  countryCode: '',
+  exchangeRate: '',
+});
     });
     
     // 🔥 NEW: Add any remaining balance to the LAST PAID invoice
@@ -1004,24 +1021,27 @@ function processInvoicePayments(invoices, transactions) {
 // });
 
 // Generate CSV for download
+// Generate CSV for download - FORMATTED FOR QUICKBOOKS
 app.post('/api/export-payments', (req, res) => {
   try {
     const { payments } = req.body;
     
-    const csv = Papa.unparse(payments, {
-      columns: [
-        'paymentDate',
-        'customerName',
-        'paymentMethod',
-        'depositToAccountName',
-        'invoiceNo',
-        'journalNo',
-        'amount',           // ✅ Only the amount paid, not invoiceAmount
-        'referenceNo',
-        'memo',
-        'countryCode',
-        'exchangeRate',
-      ],
+    // Format data for QuickBooks with proper column names and casing
+    const formattedPayments = payments.map(payment => ({
+      'Payment Date': payment.paymentDate,
+      'Customer': payment.customerName.toUpperCase(), // ✅ UPPERCASE
+      'Payment Method': payment.paymentMethod,
+      'Deposit To Account Name': payment.depositToAccountName,
+      'Invoice No': payment.invoiceNo,
+      'Journal No': payment.journalNo || '',
+      'Amount': payment.amount,
+      'Reference No': payment.referenceNo || '',
+      'Memo': payment.memo || '',
+      'Country Code': payment.countryCode || '',
+      'Exchange Rate': payment.exchangeRate || '',
+    }));
+    
+    const csv = Papa.unparse(formattedPayments, {
       header: true,
     });
 
@@ -1036,6 +1056,41 @@ app.post('/api/export-payments', (req, res) => {
     });
   }
 });
+
+
+
+// app.post('/api/export-payments', (req, res) => {
+//   try {
+//     const { payments } = req.body;
+    
+//     const csv = Papa.unparse(payments, {
+//       columns: [
+//         'paymentDate',
+//         'customerName',
+//         'paymentMethod',
+//         'depositToAccountName',
+//         'invoiceNo',
+//         'journalNo',
+//         'amount',           // ✅ Only the amount paid, not invoiceAmount
+//         'referenceNo',
+//         'memo',
+//         'countryCode',
+//         'exchangeRate',
+//       ],
+//       header: true,
+//     });
+
+//     res.setHeader('Content-Type', 'text/csv');
+//     res.setHeader('Content-Disposition', 'attachment; filename=processed_payments.csv');
+//     res.send(csv);
+//   } catch (error) {
+//     res.status(500).json({
+//       success: false,
+//       message: 'Error exporting payments',
+//       error: error.message,
+//     });
+//   }
+// });
 
 // Health check endpoint
 app.get('/', (req, res) => {

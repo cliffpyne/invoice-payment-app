@@ -155,26 +155,29 @@ function InvoiceProcessor() {
 
 
 
-  const downloadCSV = () => {
+
+const downloadCSV = () => {
   if (processedPayments.length === 0) {
     setError('No processed payments to download');
     return;
   }
 
-  const csv = Papa.unparse(processedPayments, {
-    columns: [
-      'paymentDate',
-      'customerName',
-      'paymentMethod',
-      'depositToAccountName',
-      'invoiceNo',
-      'journalNo',
-      'amount',           // ✅ Only the amount paid
-      'referenceNo',
-      'memo',
-      'countryCode',
-      'exchangeRate',
-    ],
+  // Format data for QuickBooks with proper column names and casing
+  const formattedPayments = processedPayments.map(payment => ({
+    'Payment Date': payment.paymentDate,
+    'Customer': payment.customerName.toUpperCase(), // ✅ UPPERCASE
+    'Payment Method': payment.paymentMethod,
+    'Deposit To Account Name': payment.depositToAccountName,
+    'Invoice No': payment.invoiceNo,
+    'Journal No': payment.journalNo || '',
+    'Amount': payment.amount,
+    'Reference No': payment.referenceNo || '',
+    'Memo': payment.memo || '',
+    'Country Code': payment.countryCode || '',
+    'Exchange Rate': payment.exchangeRate || '',
+  }));
+
+  const csv = Papa.unparse(formattedPayments, {
     header: true,
   });
 
@@ -189,6 +192,43 @@ function InvoiceProcessor() {
   document.body.removeChild(a);
   window.URL.revokeObjectURL(url);
 };
+
+
+
+//   const downloadCSV = () => {
+//   if (processedPayments.length === 0) {
+//     setError('No processed payments to download');
+//     return;
+//   }
+
+//   const csv = Papa.unparse(processedPayments, {
+//     columns: [
+//       'paymentDate',
+//       'customerName',
+//       'paymentMethod',
+//       'depositToAccountName',
+//       'invoiceNo',
+//       'journalNo',
+//       'amount',           // ✅ Only the amount paid
+//       'referenceNo',
+//       'memo',
+//       'countryCode',
+//       'exchangeRate',
+//     ],
+//     header: true,
+//   });
+
+//   const blob = new Blob([csv], { type: 'text/csv' });
+//   const url = window.URL.createObjectURL(blob);
+//   const a = document.createElement('a');
+//   a.href = url;
+//   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+//   a.download = `processed_payments_${timestamp}.csv`;
+//   document.body.appendChild(a);
+//   a.click();
+//   document.body.removeChild(a);
+//   window.URL.revokeObjectURL(url);
+// };
 
 
 
