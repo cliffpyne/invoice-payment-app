@@ -115,13 +115,55 @@ function InvoiceProcessor() {
     setEndTime('23:59');
   };
 
+  // const downloadCSV = () => {
+  //   if (processedPayments.length === 0) {
+  //     setError('No processed payments to download');
+  //     return;
+  //   }
+
+  //   const formattedPayments = processedPayments.map(payment => ({
+  //     'Payment Date': payment.paymentDate,
+  //     'Customer': payment.customerName.toUpperCase(),
+  //     'Payment Method': payment.paymentMethod,
+  //     'Deposit To Account Name': payment.depositToAccountName,
+  //     'Invoice No': payment.invoiceNo,
+  //     'Journal No': payment.journalNo || '',
+  //     'Amount': payment.amount,
+  //     'Reference No': payment.referenceNo || '',
+  //     'Memo': payment.memo || '',
+  //     'Country Code': payment.countryCode || '',
+  //     'Exchange Rate': payment.exchangeRate || '',
+  //   }));
+
+  //   const csv = Papa.unparse(formattedPayments, { header: true });
+  //   const blob = new Blob([csv], { type: 'text/csv' });
+  //   const url = window.URL.createObjectURL(blob);
+  //   const a = document.createElement('a');
+  //   a.href = url;
+  //   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+  //   a.download = `processed_payments_${timestamp}.csv`;
+  //   document.body.appendChild(a);
+  //   a.click();
+  //   document.body.removeChild(a);
+  //   window.URL.revokeObjectURL(url);
+  // };
+
+
   const downloadCSV = () => {
     if (processedPayments.length === 0) {
       setError('No processed payments to download');
       return;
     }
 
-    const formattedPayments = processedPayments.map(payment => ({
+    // 🔥 Filter out UNUSED transactions
+    const invoicePayments = processedPayments.filter(p => p.invoiceNo !== 'UNUSED');
+
+    if (invoicePayments.length === 0) {
+      setError('No invoice payments to download');
+      return;
+    }
+
+    const formattedPayments = invoicePayments.map(payment => ({
       'Payment Date': payment.paymentDate,
       'Customer': payment.customerName.toUpperCase(),
       'Payment Method': payment.paymentMethod,
@@ -142,6 +184,37 @@ function InvoiceProcessor() {
     a.href = url;
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
     a.download = `processed_payments_${timestamp}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+  };
+
+  const downloadUnusedCSV = () => {
+    // 🔥 Filter only UNUSED transactions
+    const unusedTransactions = processedPayments.filter(p => p.invoiceNo === 'UNUSED');
+
+    if (unusedTransactions.length === 0) {
+      setError('No unused transactions to download');
+      return;
+    }
+
+    const formattedUnused = unusedTransactions.map(payment => ({
+      'Transaction Date': payment.paymentDate,
+      'Customer': payment.customerName.toUpperCase(),
+      'Transaction Amount': payment.invoiceAmount || payment.transactionAmount, // 🔥 Transaction amount (no invoice involved)
+      'Transaction ID': payment.memo || '',
+      'Payment Method': payment.paymentMethod,
+      'Status': 'UNUSED - No Matching Invoice',
+    }));
+
+    const csv = Papa.unparse(formattedUnused, { header: true });
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+    a.download = `unused_transactions_${timestamp}.csv`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -678,6 +751,8 @@ function InvoiceProcessor() {
 }
 
 export default InvoiceProcessor;
+
+
 // import React, { useState } from 'react';
 // import axios from 'axios';
 // import Papa from 'papaparse';
