@@ -969,6 +969,41 @@ function processInvoicePayments(invoices, transactions) {
 // }
 
 // Generate CSV for download
+// app.post('/api/export-payments', (req, res) => {
+//   try {
+//     const { payments } = req.body;
+    
+//     const csv = Papa.unparse(payments, {
+//       columns: [
+//         'paymentDate',
+//         'customerName',
+//         'paymentMethod',
+//         'depositToAccountName',
+//         'invoiceNo',
+//         'journalNo',
+//         'invoiceAmount',
+//         'amount',
+//         'referenceNo',
+//         'memo',
+//         'countryCode',
+//         'exchangeRate',
+//       ],
+//       header: true,
+//     });
+
+//     res.setHeader('Content-Type', 'text/csv');
+//     res.setHeader('Content-Disposition', 'attachment; filename=processed_payments.csv');
+//     res.send(csv);
+//   } catch (error) {
+//     res.status(500).json({
+//       success: false,
+//       message: 'Error exporting payments',
+//       error: error.message,
+//     });
+//   }
+// });
+
+// Generate CSV for download
 app.post('/api/export-payments', (req, res) => {
   try {
     const { payments } = req.body;
@@ -981,8 +1016,7 @@ app.post('/api/export-payments', (req, res) => {
         'depositToAccountName',
         'invoiceNo',
         'journalNo',
-        'invoiceAmount',
-        'amount',
+        'amount',           // ✅ Only the amount paid, not invoiceAmount
         'referenceNo',
         'memo',
         'countryCode',

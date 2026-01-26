@@ -117,41 +117,80 @@ function InvoiceProcessor() {
     setEndTime('23:59');
   };
 
+  // const downloadCSV = () => {
+  //   if (processedPayments.length === 0) {
+  //     setError('No processed payments to download');
+  //     return;
+  //   }
+
+  //   const csv = Papa.unparse(processedPayments, {
+  //     columns: [
+  //       'paymentDate',
+  //       'customerName',
+  //       'paymentMethod',
+  //       'depositToAccountName',
+  //       'invoiceNo',
+  //       'journalNo',
+  //       'invoiceAmount',
+  //       'amount',
+  //       'referenceNo',
+  //       'memo',
+  //       'countryCode',
+  //       'exchangeRate',
+  //     ],
+  //     header: true,
+  //   });
+
+  //   const blob = new Blob([csv], { type: 'text/csv' });
+  //   const url = window.URL.createObjectURL(blob);
+  //   const a = document.createElement('a');
+  //   a.href = url;
+  //   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+  //   a.download = `processed_payments_${timestamp}.csv`;
+  //   document.body.appendChild(a);
+  //   a.click();
+  //   document.body.removeChild(a);
+  //   window.URL.revokeObjectURL(url);
+  // };
+
+
+
   const downloadCSV = () => {
-    if (processedPayments.length === 0) {
-      setError('No processed payments to download');
-      return;
-    }
+  if (processedPayments.length === 0) {
+    setError('No processed payments to download');
+    return;
+  }
 
-    const csv = Papa.unparse(processedPayments, {
-      columns: [
-        'paymentDate',
-        'customerName',
-        'paymentMethod',
-        'depositToAccountName',
-        'invoiceNo',
-        'journalNo',
-        'invoiceAmount',
-        'amount',
-        'referenceNo',
-        'memo',
-        'countryCode',
-        'exchangeRate',
-      ],
-      header: true,
-    });
+  const csv = Papa.unparse(processedPayments, {
+    columns: [
+      'paymentDate',
+      'customerName',
+      'paymentMethod',
+      'depositToAccountName',
+      'invoiceNo',
+      'journalNo',
+      'amount',           // ✅ Only the amount paid
+      'referenceNo',
+      'memo',
+      'countryCode',
+      'exchangeRate',
+    ],
+    header: true,
+  });
 
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
-    a.download = `processed_payments_${timestamp}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    window.URL.revokeObjectURL(url);
-  };
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+  a.download = `processed_payments_${timestamp}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  window.URL.revokeObjectURL(url);
+};
+
+
 
   const downloadTemplate = () => {
     const templateData = [
