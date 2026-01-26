@@ -361,6 +361,11 @@ app.post('/api/process-payments', async (req, res) => {
   try {
     const { invoices, startDate, endDate, startTime, endTime, channel } = req.body;
 
+    console.log('\n🔍 Fetching transactions for payment processing...');
+    console.log('Date range:', startDate, 'to', endDate);
+    console.log('Time range:', startTime || '00:00', 'to', endTime || '23:59');
+    console.log('Channel:', channel || 'all');
+
     const bodaTransactions = await fetchTransactions('DEV-BODA_LEDGER', 'boda');
     const iphoneTransactions = await fetchTransactions('DEV-IPHONE_MIXX', 'iphone');
     const lipaTransactions = await fetchTransactions('DEV-LIPA_MIXX', 'lipa');
@@ -371,7 +376,9 @@ app.post('/api/process-payments', async (req, res) => {
       ...lipaTransactions,
     ];
 
-    // Filter by DATE + TIME range
+    console.log(`📊 Total transactions fetched: ${allTransactions.length}`);
+
+    // 🔥 CRITICAL: Filter by DATE + TIME range
     if (startDate && endDate) {
       const startTimeStr = startTime || '00:00';
       const endTimeStr = endTime || '23:59';
@@ -379,20 +386,33 @@ app.post('/api/process-payments', async (req, res) => {
       const startTimestamp = new Date(`${startDate} ${startTimeStr}:00 GMT+0300`).getTime();
       const endTimestamp = new Date(`${endDate} ${endTimeStr}:59 GMT+0300`).getTime();
       
+      console.log('\n⏰ Applying DateTime Filter:');
+      console.log('Start:', new Date(startTimestamp).toISOString());
+      console.log('End:', new Date(endTimestamp).toISOString());
+      
+      const beforeFilterCount = allTransactions.length;
+      
       allTransactions = allTransactions.filter(transaction => {
         if (!transaction.receivedTimestamp) return false;
         return transaction.receivedTimestamp >= startTimestamp && 
                transaction.receivedTimestamp <= endTimestamp;
       });
+      
+      console.log(`✅ Filtered: ${beforeFilterCount} → ${allTransactions.length} transactions`);
+    } else {
+      console.warn('⚠️ WARNING: No date range provided! Using ALL transactions.');
     }
 
     // Filter by channel
     if (channel && channel !== 'all') {
+      const beforeChannelFilter = allTransactions.length;
       allTransactions = allTransactions.filter(transaction => transaction.channel === channel);
+      console.log(`📡 Channel filter (${channel}): ${beforeChannelFilter} → ${allTransactions.length} transactions`);
     }
 
-    console.log('Processing with', allTransactions.length, 'transactions');
+    console.log(`\n💵 FINAL: Processing ${allTransactions.length} transactions for ${invoices.length} invoices`);
 
+    // 🔥 CRITICAL: Only use the FILTERED transactions for payment processing
     const processedInvoices = processInvoicePayments(invoices, allTransactions);
 
     res.json({
@@ -400,6 +420,7 @@ app.post('/api/process-payments', async (req, res) => {
       data: processedInvoices,
     });
   } catch (error) {
+    console.error('❌ Error processing payments:', error);
     res.status(500).json({
       success: false,
       message: 'Error processing payments',
@@ -416,9 +437,11 @@ function extractPhone(customerName) {
 
 // Main payment processing logic
 function processInvoicePayments(invoices, transactions) {
-  console.log('\n=== Processing Invoice Payments ===');
-  console.log('Invoices to process:', invoices.length);
-  console.log('Transactions available:', transactions.length);
+  console.log('\n========================================');
+  console.log('=== PAYMENT PROCESSING STARTED ===');
+  console.log('========================================');
+  console.log('📋 Invoices to process:', invoices.length);
+  console.log('💵 Transactions available (WITHIN TIME FRAME):', transactions.length);
   
   // Step 1: Group invoices by customer (by phone or name)
   const invoicesByCustomer = {};
@@ -431,6 +454,8 @@ function processInvoicePayments(invoices, transactions) {
     invoicesByCustomer[key].push(invoice);
   });
 
+  console.log(`\n👥 Found ${Object.keys(invoicesByCustomer).length} unique customers with invoices`);
+
   // Step 2: Sort each customer's invoices by date (DESCENDING - newest/last invoice first)
   Object.keys(invoicesByCustomer).forEach(customerKey => {
     invoicesByCustomer[customerKey].sort((a, b) => {
@@ -441,10 +466,11 @@ function processInvoicePayments(invoices, transactions) {
       return b.invoiceNumber.localeCompare(a.invoiceNumber);
     });
     
-    console.log(`\n📋 Customer: ${customerKey}`);
-    console.log('Invoices sorted (newest first):');
+    console.log(`\n📋 Customer: "${customerKey}"`);
+    console.log(`   Total invoices: ${invoicesByCustomer[customerKey].length}`);
+    console.log('   Invoices sorted (NEWEST → OLDEST):');
     invoicesByCustomer[customerKey].forEach((inv, idx) => {
-      console.log(`  ${idx + 1}. ${inv.invoiceNumber} - ${inv.invoiceDate} - TZS ${inv.amount}`);
+      console.log(`      ${idx + 1}. Invoice #${inv.invoiceNumber} | Date: ${inv.invoiceDate} | Amount: TZS ${inv.amount.toLocaleString()}`);
     });
   });
 
@@ -468,6 +494,8 @@ function processInvoicePayments(invoices, transactions) {
     });
   });
 
+  console.log(`\n💰 Found ${Object.keys(transactionsByCustomer).length} unique customers with transactions (in selected time frame)`);
+
   // Step 4: Process payments for each customer
   const processedInvoices = [];
 
@@ -475,10 +503,23 @@ function processInvoicePayments(invoices, transactions) {
     const customerInvoices = invoicesByCustomer[customerKey];
     const customerTransactions = transactionsByCustomer[customerKey] || [];
     
+    console.log(`\n${'='.repeat(80)}`);
+    console.log(`💵 PROCESSING: "${customerKey}"`);
+    console.log(`${'='.repeat(80)}`);
+    
     // Calculate total money available from this customer's transactions
     let availableAmount = customerTransactions.reduce((sum, t) => sum + (t.amount || 0), 0);
     
-    console.log(`\n💰 Customer ${customerKey}: Total available = TZS ${availableAmount}`);
+    console.log(`   Transactions in selected time frame: ${customerTransactions.length}`);
+    if (customerTransactions.length > 0) {
+      console.log(`   Transaction details:`);
+      customerTransactions.forEach((t, idx) => {
+        console.log(`      ${idx + 1}. ${t.receivedDateTime} | TZS ${t.amount.toLocaleString()} | ID: ${t.transactionId || 'N/A'}`);
+      });
+    }
+    console.log(`   💰 TOTAL AVAILABLE: TZS ${availableAmount.toLocaleString()}`);
+    console.log(`   📋 Invoices to pay: ${customerInvoices.length}`);
+    console.log('');
     
     // Pay invoices in order (newest first)
     customerInvoices.forEach((invoice, idx) => {
@@ -490,16 +531,22 @@ function processInvoicePayments(invoices, transactions) {
         // Full payment
         amountPaid = invoiceAmount;
         availableAmount -= invoiceAmount;
-        console.log(`  ✅ Invoice ${idx + 1} (${invoice.invoiceNumber}): FULLY PAID TZS ${amountPaid} / ${invoiceAmount}. Remaining: TZS ${availableAmount}`);
+        console.log(`   ✅ Invoice ${idx + 1} (#${invoice.invoiceNumber}): FULLY PAID`);
+        console.log(`      Amount: TZS ${amountPaid.toLocaleString()} / ${invoiceAmount.toLocaleString()}`);
+        console.log(`      Remaining balance: TZS ${availableAmount.toLocaleString()}`);
       } else if (availableAmount > 0) {
         // Partial payment
         amountPaid = availableAmount;
         availableAmount = 0;
-        console.log(`  ⚠️ Invoice ${idx + 1} (${invoice.invoiceNumber}): PARTIALLY PAID TZS ${amountPaid} / ${invoiceAmount}. Remaining: TZS 0`);
+        console.log(`   ⚠️  Invoice ${idx + 1} (#${invoice.invoiceNumber}): PARTIALLY PAID`);
+        console.log(`      Amount: TZS ${amountPaid.toLocaleString()} / ${invoiceAmount.toLocaleString()}`);
+        console.log(`      Remaining balance: TZS 0 (DEPLETED)`);
       } else {
         // No payment
         amountPaid = 0;
-        console.log(`  ❌ Invoice ${idx + 1} (${invoice.invoiceNumber}): UNPAID TZS 0 / ${invoiceAmount}`);
+        console.log(`   ❌ Invoice ${idx + 1} (#${invoice.invoiceNumber}): UNPAID`);
+        console.log(`      Amount: TZS 0 / ${invoiceAmount.toLocaleString()}`);
+        console.log(`      Remaining balance: TZS 0 (NO FUNDS)`);
       }
       
       // Get the first transaction for payment date reference
@@ -522,7 +569,14 @@ function processInvoicePayments(invoices, transactions) {
     });
   });
 
-  console.log(`\n✅ Processed ${processedInvoices.length} invoices total`);
+  console.log(`\n${'='.repeat(80)}`);
+  console.log(`✅ PAYMENT PROCESSING COMPLETED`);
+  console.log(`${'='.repeat(80)}`);
+  console.log(`Total invoices processed: ${processedInvoices.length}`);
+  console.log(`Total paid: TZS ${processedInvoices.reduce((sum, p) => sum + p.amount, 0).toLocaleString()}`);
+  console.log(`Total unpaid: ${processedInvoices.filter(p => p.amount === 0).length} invoices`);
+  console.log(`\n`);
+  
   return processedInvoices;
 }
 
@@ -594,6 +648,611 @@ app.listen(port, () => {
   console.log(`📅 Filtering transactions from Jan 1, 2026 onwards`);
   console.log(`📆 Accepting date formats: MM/DD/YYYY and DD Mon YYYY`);
 });
+
+
+
+
+
+
+
+
+
+// const express = require('express');
+// const cors = require('cors');
+// const multer = require('multer');
+// const Papa = require('papaparse');
+// const { google } = require('googleapis');
+// require('dotenv').config();
+
+// const app = express();
+// const port = process.env.PORT || 5000;
+// // please over please just for testing bro 
+// // Middleware
+// app.use(cors({
+//   origin: '*',
+//   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
+// }));
+// app.use(express.json({ limit: '50mb' })); // Increased limit for large CSV uploads
+// app.use(express.urlencoded({ limit: '50mb', extended: true }));
+
+// // Configure multer for file uploads
+// const upload = multer({ storage: multer.memoryStorage() });
+
+// // Google Sheets configuration
+// const SPREADSHEET_ID = '1N3ZxahtaFBX0iK3cijDraDmyZM8573PVVf8D-WVqicE';
+// const SERVICE_ACCOUNT_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || 'sms-sync-service@lmp-sms-sync.iam.gserviceaccount.com';
+
+// // 🔥 NEW: Minimum date filter - January 1, 2026
+// const MIN_DATE_TIMESTAMP = new Date('2026-01-01T00:00:00+03:00').getTime();
+
+// // Initialize Google Sheets API
+// async function getGoogleSheetsClient() {
+//   const auth = new google.auth.GoogleAuth({
+//     credentials: {
+//       type: 'service_account',
+//       client_email: SERVICE_ACCOUNT_EMAIL,
+//       private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+//       project_id: 'lmp-sms-sync',
+//     },
+//     scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
+//   });
+
+//   const client = await auth.getClient();
+//   return google.sheets({ version: 'v4', auth: client });
+// }
+
+// // Parse dates in MM/DD/YYYY format or "22 Jan 2026, 05:16 pm (EAT)" format
+// function parseEATDateTime(rawDate) {
+//   if (!rawDate) return { display: null, timestamp: null, dateOnly: null, timeOnly: null };
+
+//   try {
+//     // Check if it's MM/DD/YYYY format (e.g., "01/23/2026")
+//     const mmddyyyyPattern = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/;
+//     const mmddyyyyMatch = rawDate.match(mmddyyyyPattern);
+    
+//     if (mmddyyyyMatch) {
+//       const [, month, day, year] = mmddyyyyMatch;
+//       const parsed = new Date(`${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}T00:00:00+03:00`);
+      
+//       if (isNaN(parsed)) {
+//         console.warn('Failed to parse MM/DD/YYYY date:', rawDate);
+//         return { display: rawDate, timestamp: null, dateOnly: rawDate, timeOnly: null };
+//       }
+      
+//       return {
+//         display: rawDate,
+//         timestamp: parsed.getTime(),
+//         dateOnly: rawDate,
+//         timeOnly: '00:00'
+//       };
+//     }
+    
+//     // Original format: "22 Jan 2026, 05:16 pm (EAT)"
+//     const parts = rawDate.split(',').map(s => s.trim());
+    
+//     if (parts.length < 2) {
+//       // No time, just date
+//       const dateOnly = parts[0]; // "22 Jan 2026"
+//       const parsed = new Date(`${dateOnly} 00:00:00 GMT+0300`);
+      
+//       return {
+//         display: dateOnly,
+//         timestamp: parsed.getTime(),
+//         dateOnly: dateOnly,
+//         timeOnly: '00:00'
+//       };
+//     }
+
+//     const datePart = parts[0]; // "22 Jan 2026"
+//     const timePart = parts[1].replace(/\s*\(EAT\)/, '').trim(); // "05:16 pm"
+
+//     // Parse to EAT timezone (GMT+3) to avoid date shifts
+//     const dateTimeStr = `${datePart} ${timePart} GMT+0300`;
+//     const parsed = new Date(dateTimeStr);
+
+//     if (isNaN(parsed)) {
+//       console.warn('Failed to parse date:', rawDate);
+//       return { display: rawDate, timestamp: null, dateOnly: datePart, timeOnly: null };
+//     }
+
+//     // Extract time in HH:mm format
+//     const hours = String(parsed.getHours()).padStart(2, '0');
+//     const minutes = String(parsed.getMinutes()).padStart(2, '0');
+//     const timeOnly = `${hours}:${minutes}`;
+
+//     return {
+//       display: `${datePart}, ${timePart}`,
+//       timestamp: parsed.getTime(),
+//       dateOnly: datePart,
+//       timeOnly: timeOnly,
+//       iso: parsed.toISOString()
+//     };
+
+//   } catch (error) {
+//     console.error('Error parsing date:', rawDate, error);
+//     return { display: rawDate, timestamp: null, dateOnly: null, timeOnly: null };
+//   }
+// }
+
+// // 🔥 UPDATED: Fetch transactions with DATE FILTER (only Jan 1, 2026+)
+// async function fetchTransactions(sheetName, channel) {
+//   try {
+//     const sheets = await getGoogleSheetsClient();
+
+//     const { data } = await sheets.spreadsheets.values.get({
+//       spreadsheetId: SPREADSHEET_ID,
+//       range: `${sheetName}!A2:H`,
+//       majorDimension: 'ROWS',
+//     });
+
+//     const rows = data.values || [];
+//     const results = [];
+//     let filteredCount = 0;
+//     let tooOldCount = 0;
+
+//     console.log(`📊 Processing ${rows.length} rows from ${sheetName}...`);
+
+//     for (let i = 0; i < rows.length; i++) {
+//       const row = rows[i];
+
+//       // Parse DateTime with TIME support
+//       const dateTime = parseEATDateTime(row[2]);
+
+//       // 🔥 NEW: Filter out messages before Jan 1, 2026
+//       // Safety check: Only filter if we have a valid timestamp
+//       if (dateTime.timestamp) {
+//         if (dateTime.timestamp < MIN_DATE_TIMESTAMP) {
+//           tooOldCount++;
+//           continue; // Skip this row - too old
+//         }
+//       } else {
+//         // No valid timestamp - log warning but keep the row
+//         console.warn(`⚠️ Row ${i + 2} has invalid date: ${row[2]}`);
+//       }
+
+//       filteredCount++;
+
+//       results.push({
+//         id: row[7] || `${channel}-${i + 1}`,
+//         channel,
+
+//         paymentChannel: row[1] || null,
+//         transactionMessage: row[3] || null,
+
+//         customerPhone: row[4] || null,
+//         customerName: row[5] || null,
+//         contractName: row[5] || null,
+
+//         amount: row[6] ? Number(row[6]) : null,
+
+//         // NEW: Full DateTime info
+//         receivedRaw: row[2], // "22 Jan 2026, 05:16 pm (EAT)" or "01/23/2026"
+//         receivedDate: dateTime.dateOnly, // "22 Jan 2026" or "01/23/2026"
+//         receivedTime: dateTime.timeOnly, // "17:16" (24-hour format)
+//         receivedDateTime: dateTime.display, // "22 Jan 2026, 05:16 pm" or "01/23/2026"
+//         receivedTimestamp: dateTime.timestamp, // Unix timestamp for filtering
+
+//         transactionId: row[7] || null,
+//       });
+//     }
+
+//     console.log(`✅ ${sheetName}: Fetched ${filteredCount} rows (${tooOldCount} filtered as too old)`);
+
+//     return results;
+
+//   } catch (error) {
+//     console.error(`❌ Error fetching from ${sheetName}:`, error);
+//     throw error;
+//   }
+// }
+
+// // API Routes
+
+// // Get all transactions (🔥 NOW FILTERED: Only Jan 1, 2026+)
+// app.get('/api/transactions', async (req, res) => {
+//   try {
+//     console.log('🔍 Fetching transactions from all channels...');
+    
+//     const bodaTransactions = await fetchTransactions('DEV-BODA_LEDGER', 'boda');
+//     const iphoneTransactions = await fetchTransactions('DEV-IPHONE_MIXX', 'iphone');
+//     const lipaTransactions = await fetchTransactions('DEV-LIPA_MIXX', 'lipa');
+
+//     const allTransactions = [
+//       ...bodaTransactions,
+//       ...iphoneTransactions,
+//       ...lipaTransactions,
+//     ];
+
+//     console.log(`✅ Total transactions returned: ${allTransactions.length}`);
+
+//     res.json({
+//       success: true,
+//       data: allTransactions,
+//       count: allTransactions.length,
+//       minDate: '2026-01-01', // 🔥 NEW: Show filter applied
+//     });
+//   } catch (error) {
+//     res.status(500).json({
+//       success: false,
+//       message: 'Error fetching transactions',
+//       error: error.message,
+//     });
+//   }
+// });
+
+// // Filter transactions by DATE + TIME range
+// app.post('/api/transactions/filter', async (req, res) => {
+//   try {
+//     const { startDate, endDate, startTime, endTime, channel } = req.body;
+
+//     const bodaTransactions = await fetchTransactions('DEV-BODA_LEDGER', 'boda');
+//     const iphoneTransactions = await fetchTransactions('DEV-IPHONE_MIXX', 'iphone');
+//     const lipaTransactions = await fetchTransactions('DEV-LIPA_MIXX', 'lipa');
+
+//     let allTransactions = [
+//       ...bodaTransactions,
+//       ...iphoneTransactions,
+//       ...lipaTransactions,
+//     ];
+
+//     // Filter by DATE + TIME range
+//     if (startDate && endDate) {
+//       const startTimeStr = startTime || '00:00';
+//       const endTimeStr = endTime || '23:59';
+      
+//       // Create timestamps in EAT (GMT+3) to avoid date shifts
+//       const startTimestamp = new Date(`${startDate} ${startTimeStr}:00 GMT+0300`).getTime();
+//       const endTimestamp = new Date(`${endDate} ${endTimeStr}:59 GMT+0300`).getTime();
+      
+//       console.log('=== DateTime Filter ===');
+//       console.log('Start:', new Date(startTimestamp).toISOString());
+//       console.log('End:', new Date(endTimestamp).toISOString());
+//       console.log('Total transactions before filter:', allTransactions.length);
+      
+//       allTransactions = allTransactions.filter(transaction => {
+//         if (!transaction.receivedTimestamp) return false;
+        
+//         const isInRange = transaction.receivedTimestamp >= startTimestamp && 
+//                          transaction.receivedTimestamp <= endTimestamp;
+        
+//         if (isInRange) {
+//           console.log('✓ Matched:', {
+//             dateTime: transaction.receivedDateTime,
+//             customer: transaction.customerName || transaction.contractName,
+//             amount: transaction.amount
+//           });
+//         }
+        
+//         return isInRange;
+//       });
+      
+//       console.log('Total transactions after filter:', allTransactions.length);
+//     }
+
+//     // Filter by channel
+//     if (channel && channel !== 'all') {
+//       console.log('Filtering by channel:', channel);
+//       allTransactions = allTransactions.filter(transaction => transaction.channel === channel);
+//       console.log('After channel filter:', allTransactions.length);
+//     }
+
+//     res.json({
+//       success: true,
+//       data: allTransactions,
+//       count: allTransactions.length,
+//     });
+//   } catch (error) {
+//     res.status(500).json({
+//       success: false,
+//       message: 'Error filtering transactions',
+//       error: error.message,
+//     });
+//   }
+// });
+
+// // Upload and parse invoices CSV
+// app.post('/api/invoices/upload', upload.single('file'), (req, res) => {
+//   try {
+//     if (!req.file) {
+//       return res.status(400).json({
+//         success: false,
+//         message: 'No file uploaded',
+//       });
+//     }
+
+//     const fileContent = req.file.buffer.toString('utf-8');
+    
+//     Papa.parse(fileContent, {
+//       header: true,
+//       skipEmptyLines: true,
+//       complete: (results) => {
+//         const invoices = results.data.map((row, index) => {
+//           // Extract and clean the amount - remove commas and parse
+//           const amountStr = (row['Amount'] || '0').toString().replace(/,/g, '');
+//           const amount = parseFloat(amountStr) || 0;
+          
+//           return {
+//             id: index + 1,
+//             customerName: row['Customer'] || row['Customer Name'] || '',
+//             invoiceNumber: row['Invoice No'] || row['Invoice Number'] || '',
+//             amount: amount,
+//             invoiceDate: row['Invoice Date'] || row['Date'] || '',
+//             customerPhone: extractPhone(row['Customer'] || ''),
+//           };
+//         });
+
+//         console.log('\n📤 CSV Upload Summary:');
+//         console.log(`Total invoices: ${invoices.length}`);
+//         if (invoices.length > 0) {
+//           console.log('Sample invoice:', {
+//             customer: invoices[0].customerName,
+//             invoiceNo: invoices[0].invoiceNumber,
+//             amount: invoices[0].amount,
+//             date: invoices[0].invoiceDate
+//           });
+//         }
+
+//         res.json({
+//           success: true,
+//           data: invoices,
+//           count: invoices.length,
+//         });
+//       },
+//       error: (error) => {
+//         res.status(400).json({
+//           success: false,
+//           message: 'Error parsing CSV',
+//           error: error.message,
+//         });
+//       },
+//     });
+//   } catch (error) {
+//     res.status(500).json({
+//       success: false,
+//       message: 'Error processing file',
+//       error: error.message,
+//     });
+//   }
+// });
+
+// // Process invoice payments
+// app.post('/api/process-payments', async (req, res) => {
+//   try {
+//     const { invoices, startDate, endDate, startTime, endTime, channel } = req.body;
+
+//     const bodaTransactions = await fetchTransactions('DEV-BODA_LEDGER', 'boda');
+//     const iphoneTransactions = await fetchTransactions('DEV-IPHONE_MIXX', 'iphone');
+//     const lipaTransactions = await fetchTransactions('DEV-LIPA_MIXX', 'lipa');
+
+//     let allTransactions = [
+//       ...bodaTransactions,
+//       ...iphoneTransactions,
+//       ...lipaTransactions,
+//     ];
+
+//     // Filter by DATE + TIME range
+//     if (startDate && endDate) {
+//       const startTimeStr = startTime || '00:00';
+//       const endTimeStr = endTime || '23:59';
+      
+//       const startTimestamp = new Date(`${startDate} ${startTimeStr}:00 GMT+0300`).getTime();
+//       const endTimestamp = new Date(`${endDate} ${endTimeStr}:59 GMT+0300`).getTime();
+      
+//       allTransactions = allTransactions.filter(transaction => {
+//         if (!transaction.receivedTimestamp) return false;
+//         return transaction.receivedTimestamp >= startTimestamp && 
+//                transaction.receivedTimestamp <= endTimestamp;
+//       });
+//     }
+
+//     // Filter by channel
+//     if (channel && channel !== 'all') {
+//       allTransactions = allTransactions.filter(transaction => transaction.channel === channel);
+//     }
+
+//     console.log('Processing with', allTransactions.length, 'transactions');
+
+//     const processedInvoices = processInvoicePayments(invoices, allTransactions);
+
+//     res.json({
+//       success: true,
+//       data: processedInvoices,
+//     });
+//   } catch (error) {
+//     res.status(500).json({
+//       success: false,
+//       message: 'Error processing payments',
+//       error: error.message,
+//     });
+//   }
+// });
+
+// // Helper function to extract phone
+// function extractPhone(customerName) {
+//   const phoneMatch = customerName.match(/\d{10,}/);
+//   return phoneMatch ? phoneMatch[0] : null;
+// }
+
+// // Main payment processing logic
+// function processInvoicePayments(invoices, transactions) {
+//   console.log('\n=== Processing Invoice Payments ===');
+//   console.log('Invoices to process:', invoices.length);
+//   console.log('Transactions available:', transactions.length);
+  
+//   // Step 1: Group invoices by customer (by phone or name)
+//   const invoicesByCustomer = {};
+  
+//   invoices.forEach(invoice => {
+//     const key = invoice.customerPhone || invoice.customerName.toLowerCase().trim();
+//     if (!invoicesByCustomer[key]) {
+//       invoicesByCustomer[key] = [];
+//     }
+//     invoicesByCustomer[key].push(invoice);
+//   });
+
+//   // Step 2: Sort each customer's invoices by date (DESCENDING - newest/last invoice first)
+//   Object.keys(invoicesByCustomer).forEach(customerKey => {
+//     invoicesByCustomer[customerKey].sort((a, b) => {
+//       // Sort by date descending (newest first)
+//       const dateCompare = new Date(b.invoiceDate) - new Date(a.invoiceDate);
+//       if (dateCompare !== 0) return dateCompare;
+//       // If same date, sort by invoice number descending
+//       return b.invoiceNumber.localeCompare(a.invoiceNumber);
+//     });
+    
+//     console.log(`\n📋 Customer: ${customerKey}`);
+//     console.log('Invoices sorted (newest first):');
+//     invoicesByCustomer[customerKey].forEach((inv, idx) => {
+//       console.log(`  ${idx + 1}. ${inv.invoiceNumber} - ${inv.invoiceDate} - TZS ${inv.amount}`);
+//     });
+//   });
+
+//   // Step 3: Group transactions by customer
+//   const transactionsByCustomer = {};
+  
+//   transactions.forEach(transaction => {
+//     if (!transaction.amount) return;
+    
+//     const keys = [
+//       transaction.customerPhone,
+//       transaction.contractName?.toLowerCase().trim(),
+//       transaction.customerName?.toLowerCase().trim()
+//     ].filter(Boolean);
+    
+//     keys.forEach(key => {
+//       if (!transactionsByCustomer[key]) {
+//         transactionsByCustomer[key] = [];
+//       }
+//       transactionsByCustomer[key].push(transaction);
+//     });
+//   });
+
+//   // Step 4: Process payments for each customer
+//   const processedInvoices = [];
+
+//   Object.keys(invoicesByCustomer).forEach(customerKey => {
+//     const customerInvoices = invoicesByCustomer[customerKey];
+//     const customerTransactions = transactionsByCustomer[customerKey] || [];
+    
+//     // Calculate total money available from this customer's transactions
+//     let availableAmount = customerTransactions.reduce((sum, t) => sum + (t.amount || 0), 0);
+    
+//     console.log(`\n💰 Customer ${customerKey}: Total available = TZS ${availableAmount}`);
+    
+//     // Pay invoices in order (newest first)
+//     customerInvoices.forEach((invoice, idx) => {
+//       const invoiceAmount = invoice.amount;
+//       let amountPaid = 0;
+      
+//       // Pay this invoice with available funds
+//       if (availableAmount >= invoiceAmount) {
+//         // Full payment
+//         amountPaid = invoiceAmount;
+//         availableAmount -= invoiceAmount;
+//         console.log(`  ✅ Invoice ${idx + 1} (${invoice.invoiceNumber}): FULLY PAID TZS ${amountPaid} / ${invoiceAmount}. Remaining: TZS ${availableAmount}`);
+//       } else if (availableAmount > 0) {
+//         // Partial payment
+//         amountPaid = availableAmount;
+//         availableAmount = 0;
+//         console.log(`  ⚠️ Invoice ${idx + 1} (${invoice.invoiceNumber}): PARTIALLY PAID TZS ${amountPaid} / ${invoiceAmount}. Remaining: TZS 0`);
+//       } else {
+//         // No payment
+//         amountPaid = 0;
+//         console.log(`  ❌ Invoice ${idx + 1} (${invoice.invoiceNumber}): UNPAID TZS 0 / ${invoiceAmount}`);
+//       }
+      
+//       // Get the first transaction for payment date reference
+//       const matchingTransaction = customerTransactions.length > 0 ? customerTransactions[0] : null;
+      
+//       processedInvoices.push({
+//         paymentDate: matchingTransaction?.receivedDateTime || matchingTransaction?.receivedDate || invoice.invoiceDate,
+//         customerName: invoice.customerName,
+//         paymentMethod: 'Cash',
+//         depositToAccountName: 'Kijichi Collection AC',
+//         invoiceNo: invoice.invoiceNumber,
+//         journalNo: '',
+//         invoiceAmount: invoiceAmount, // Original invoice amount
+//         amount: amountPaid, // Exact amount paid (can be 0, partial, or full)
+//         referenceNo: '',
+//         memo: matchingTransaction?.transactionId || '',
+//         countryCode: '',
+//         exchangeRate: '',
+//       });
+//     });
+//   });
+
+//   console.log(`\n✅ Processed ${processedInvoices.length} invoices total`);
+//   return processedInvoices;
+// }
+
+// // Generate CSV for download
+// app.post('/api/export-payments', (req, res) => {
+//   try {
+//     const { payments } = req.body;
+    
+//     const csv = Papa.unparse(payments, {
+//       columns: [
+//         'paymentDate',
+//         'customerName',
+//         'paymentMethod',
+//         'depositToAccountName',
+//         'invoiceNo',
+//         'journalNo',
+//         'invoiceAmount',
+//         'amount',
+//         'referenceNo',
+//         'memo',
+//         'countryCode',
+//         'exchangeRate',
+//       ],
+//       header: true,
+//     });
+
+//     res.setHeader('Content-Type', 'text/csv');
+//     res.setHeader('Content-Disposition', 'attachment; filename=processed_payments.csv');
+//     res.send(csv);
+//   } catch (error) {
+//     res.status(500).json({
+//       success: false,
+//       message: 'Error exporting payments',
+//       error: error.message,
+//     });
+//   }
+// });
+
+// // Health check endpoint
+// app.get('/', (req, res) => {
+//   res.json({
+//     success: true,
+//     message: 'Invoice Payment API is running!',
+//     version: '2.1.0',
+//     features: ['DateTime filtering', 'EAT timezone support', 'Jan 1, 2026+ date filter', 'MM/DD/YYYY date format support'],
+//     minDate: '2026-01-01',
+//     dateFormats: ['MM/DD/YYYY', 'DD Mon YYYY, HH:mm am/pm (EAT)'],
+//     endpoints: {
+//       transactions: '/api/transactions',
+//       filter: '/api/transactions/filter',
+//       upload: '/api/invoices/upload',
+//       process: '/api/process-payments',
+//       export: '/api/export-payments'
+//     }
+//   });
+// });
+
+// // 404 handler
+// app.use((req, res) => {
+//   res.status(404).json({
+//     success: false,
+//     message: 'Endpoint not found',
+//     path: req.path
+//   });
+// });
+
+// app.listen(port, () => {
+//   console.log(`🚀 Server running on port ${port}`);
+//   console.log(`📅 Filtering transactions from Jan 1, 2026 onwards`);
+//   console.log(`📆 Accepting date formats: MM/DD/YYYY and DD Mon YYYY`);
+// });
 
 
 
