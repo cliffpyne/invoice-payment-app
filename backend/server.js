@@ -552,23 +552,21 @@ function processInvoicePayments(invoices, transactions) {
       transaction.customerName?.toLowerCase().trim()
     ].filter(Boolean);
     
+    // 🔥 FIXED: ONLY add transaction if it matches a customer with invoices
     const matchedKey = keys.find(key => invoicesByCustomer[key]);
     
     if (matchedKey) {
+      // ✅ This transaction matches a customer who has invoices
       if (!transactionsByCustomer[matchedKey]) {
         transactionsByCustomer[matchedKey] = [];
       }
       transactionsByCustomer[matchedKey].push(transaction);
       processedTransactionIds.add(transactionUniqueId);
+      console.log(`   ✅ Matched transaction ${transaction.transactionId} to customer: ${matchedKey}`);
     } else {
-      const primaryKey = keys[0];
-      if (primaryKey) {
-        if (!transactionsByCustomer[primaryKey]) {
-          transactionsByCustomer[primaryKey] = [];
-        }
-        transactionsByCustomer[primaryKey].push(transaction);
-        processedTransactionIds.add(transactionUniqueId);
-      }
+      // ❌ No matching customer with invoices - this will be UNUSED
+      console.log(`   ⚠️ Transaction ${transaction.transactionId} has no matching invoice customer - will be UNUSED`);
+      // 🔥 DO NOT add to transactionsByCustomer - let it be unused!
     }
   });
 
@@ -849,10 +847,6 @@ app.listen(port, '0.0.0.0', () => {
 });
 
 module.exports = { processInvoicePayments };
-
-
-
-
 
 // const express = require('express');
 // const cors = require('cors');
