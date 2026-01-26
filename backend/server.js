@@ -552,21 +552,23 @@ function processInvoicePayments(invoices, transactions) {
       transaction.customerName?.toLowerCase().trim()
     ].filter(Boolean);
     
-    // 🔥 FIXED: ONLY add transaction if it matches a customer with invoices
     const matchedKey = keys.find(key => invoicesByCustomer[key]);
     
     if (matchedKey) {
-      // ✅ This transaction matches a customer who has invoices
       if (!transactionsByCustomer[matchedKey]) {
         transactionsByCustomer[matchedKey] = [];
       }
       transactionsByCustomer[matchedKey].push(transaction);
       processedTransactionIds.add(transactionUniqueId);
-      console.log(`   ✅ Matched transaction ${transaction.transactionId} to customer: ${matchedKey}`);
     } else {
-      // ❌ No matching customer with invoices - this will be UNUSED
-      console.log(`   ⚠️ Transaction ${transaction.transactionId} has no matching invoice customer - will be UNUSED`);
-      // 🔥 DO NOT add to transactionsByCustomer - let it be unused!
+      const primaryKey = keys[0];
+      if (primaryKey) {
+        if (!transactionsByCustomer[primaryKey]) {
+          transactionsByCustomer[primaryKey] = [];
+        }
+        transactionsByCustomer[primaryKey].push(transaction);
+        processedTransactionIds.add(transactionUniqueId);
+      }
     }
   });
 
@@ -634,9 +636,6 @@ function processInvoicePayments(invoices, transactions) {
       console.log(`      Date: ${transaction.receivedDateTime}`);
       console.log(`      ID: ${transaction.transactionId || 'N/A'}`);
 
-      // 🔥 FIXED: Track how much of THIS transaction was used for each invoice
-      let transactionUsedForInvoices = []; // Track {invoiceNo, amountUsed}
-      
       // Use this transaction to pay invoices
       while (transactionAmount > 0 && currentInvoiceIndex < invoiceBalances.length) {
         const currentInvoice = invoiceBalances[currentInvoiceIndex];
@@ -652,23 +651,40 @@ function processInvoicePayments(invoices, transactions) {
         console.log(`         Remaining balance: TZS ${currentInvoice.remainingBalance.toLocaleString()}`);
         console.log(`         Paying: TZS ${amountToPay.toLocaleString()}`);
 
-        // 🔥 Track this payment from this transaction
-        transactionUsedForInvoices.push({
-          invoiceNo: currentInvoice.invoice.invoiceNumber,
-          invoiceAmount: currentInvoice.invoice.amount,
+        // Format date as MM-DD-YYYY
+        let formattedDate = transaction.receivedDateTime || transaction.receivedDate || currentInvoice.invoice.invoiceDate;
+        const dateObj = new Date(formattedDate);
+        if (!isNaN(dateObj.getTime())) {
+          const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+          const day = String(dateObj.getDate()).padStart(2, '0');
+          const year = dateObj.getFullYear();
+          formattedDate = `${month}-${day}-${year}`;
+        }
+
+        // 🔥 Track total payment for this invoice
+        const currentTotal = invoiceTotalPayments.get(currentInvoice.invoice.invoiceNumber) || 0;
+        invoiceTotalPayments.set(currentInvoice.invoice.invoiceNumber, currentTotal + amountToPay);
+
+        // Create payment record
+        processedPayments.push({
+          paymentDate: formattedDate,
           customerName: currentInvoice.invoice.customerName,
-          invoiceDate: currentInvoice.invoice.invoiceDate,
-          amountUsed: amountToPay
+          paymentMethod: 'Cash',
+          depositToAccountName: 'Kijichi Collection AC',
+          invoiceNo: currentInvoice.invoice.invoiceNumber,
+          journalNo: '',
+          invoiceAmount: currentInvoice.invoice.amount,
+          amount: amountToPay,
+          referenceNo: '',
+          memo: transaction.transactionId || '',
+          countryCode: '',
+          exchangeRate: '',
         });
 
         // Update balances
         currentInvoice.remainingBalance -= amountToPay;
         transactionAmount -= amountToPay;
         transactionUsed = true;
-
-        // 🔥 Track total payment for this invoice
-        const currentTotal = invoiceTotalPayments.get(currentInvoice.invoice.invoiceNumber) || 0;
-        invoiceTotalPayments.set(currentInvoice.invoice.invoiceNumber, currentTotal + amountToPay);
 
         console.log(`         New balance: TZS ${currentInvoice.remainingBalance.toLocaleString()}`);
         console.log(`         Transaction remaining: TZS ${transactionAmount.toLocaleString()}`);
@@ -681,70 +697,13 @@ function processInvoicePayments(invoices, transactions) {
           currentInvoiceIndex++;
         }
       }
-      
-      // 🔥 NOW create payment records for this transaction
-      // Group by invoice and record the TOTAL amount used from this transaction for each invoice
-      transactionUsedForInvoices.forEach((payment, idx) => {
-        // Format date as MM-DD-YYYY
-        let formattedDate = transaction.receivedDateTime || transaction.receivedDate || payment.invoiceDate;
-        const dateObj = new Date(formattedDate);
-        if (!isNaN(dateObj.getTime())) {
-          const month = String(dateObj.getMonth() + 1).padStart(2, '0');
-          const day = String(dateObj.getDate()).padStart(2, '0');
-          const year = dateObj.getFullYear();
-          formattedDate = `${month}-${day}-${year}`;
-        }
-        
-        // 🔥 CRITICAL: Record the amount USED from this transaction, not just what the invoice needs
-        console.log(`      📝 Recording payment: Invoice #${payment.invoiceNo} - Amount: TZS ${payment.amountUsed.toLocaleString()} - Memo: ${transaction.transactionId}`);
-        
-        processedPayments.push({
-          paymentDate: formattedDate,
-          customerName: payment.customerName,
-          paymentMethod: 'Cash',
-          depositToAccountName: 'Kijichi Collection AC',
-          invoiceNo: payment.invoiceNo,
-          journalNo: '',
-          invoiceAmount: payment.invoiceAmount,
-          amount: payment.amountUsed, // 🔥 This is the ACTUAL amount used from the transaction
-          referenceNo: '',
-          memo: transaction.transactionId || '', // 🔥 Same memo for all payments from this transaction
-          countryCode: '',
-          exchangeRate: '',
-        });
-      });
 
       if (transactionUsed) {
         usedTransactions.add(transaction.transactionId || transaction.id);
       }
 
-      // 🔥 FIXED: If there's money remaining after paying all invoices, add it to the LAST invoice payment
-      if (transactionAmount > 0 && transactionUsedForInvoices.length > 0) {
-        const lastPaymentIndex = transactionUsedForInvoices.length - 1;
-        const lastInvoiceNo = transactionUsedForInvoices[lastPaymentIndex].invoiceNo;
-        
-        console.log(`      🔥 OVERPAYMENT DETECTED: TZS ${transactionAmount.toLocaleString()}`);
-        console.log(`      → Appending to last invoice payment #${lastInvoiceNo}`);
-        
-        // Find the LAST payment record for this invoice from this transaction
-        // Search backwards to find the most recent one
-        for (let i = processedPayments.length - 1; i >= 0; i--) {
-          if (processedPayments[i].invoiceNo === lastInvoiceNo && 
-              processedPayments[i].memo === (transaction.transactionId || '')) {
-            
-            const oldAmount = processedPayments[i].amount;
-            processedPayments[i].amount += transactionAmount;
-            
-            console.log(`         Old amount: TZS ${oldAmount.toLocaleString()}`);
-            console.log(`         New amount: TZS ${processedPayments[i].amount.toLocaleString()}`);
-            console.log(`         ✅ Remainder of TZS ${transactionAmount.toLocaleString()} appended!`);
-            
-            transactionAmount = 0; // All money accounted for
-            break;
-          }
-        }
-      } else if (transactionAmount > 0) {
-        console.log(`      ⚠️ Transaction has TZS ${transactionAmount.toLocaleString()} remaining but NO invoices were paid`);
+      if (transactionAmount > 0) {
+        console.log(`      ⚠️ Transaction has TZS ${transactionAmount.toLocaleString()} remaining (overpayment)`);
       }
     });
 
