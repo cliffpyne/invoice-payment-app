@@ -436,10 +436,11 @@ function extractPhone(customerName) {
 }
 
 // Main payment processing logic
-// Main payment processing logic - FIXED VERSION (NO DUPLICATES + OVERPAYMENT)
+// UPDATED: Process payments transaction-by-transaction instead of sum-first
 function processInvoicePayments(invoices, transactions) {
   console.log('\n========================================');
   console.log('=== PAYMENT PROCESSING STARTED ===');
+  console.log('=== TRANSACTION-BY-TRANSACTION MODE ===');
   console.log('========================================');
   console.log('📋 Invoices to process:', invoices.length);
   console.log('💵 Transactions available (WITHIN TIME FRAME):', transactions.length);
@@ -457,13 +458,11 @@ function processInvoicePayments(invoices, transactions) {
 
   console.log(`\n👥 Found ${Object.keys(invoicesByCustomer).length} unique customers with invoices`);
 
-  // Step 2: Sort each customer's invoices by date (DESCENDING - newest/last invoice first)
+  // Step 2: Sort each customer's invoices by date (DESCENDING - newest first)
   Object.keys(invoicesByCustomer).forEach(customerKey => {
     invoicesByCustomer[customerKey].sort((a, b) => {
-      // Sort by date descending (newest first)
       const dateCompare = new Date(b.invoiceDate) - new Date(a.invoiceDate);
       if (dateCompare !== 0) return dateCompare;
-      // If same date, sort by invoice number descending
       return b.invoiceNumber.localeCompare(a.invoiceNumber);
     });
     
@@ -475,17 +474,15 @@ function processInvoicePayments(invoices, transactions) {
     });
   });
 
-  // Step 3: Group transactions by customer - FIXED TO PREVENT DUPLICATES
+  // Step 3: Group transactions by customer AND sort by timestamp
   const transactionsByCustomer = {};
   const processedTransactionIds = new Set();
   
   transactions.forEach(transaction => {
     if (!transaction.amount) return;
     
-    // Create unique identifier for this transaction
     const transactionUniqueId = `${transaction.transactionId || transaction.id}_${transaction.receivedTimestamp}_${transaction.amount}`;
     
-    // Skip if we've already processed this exact transaction
     if (processedTransactionIds.has(transactionUniqueId)) {
       console.warn(`⚠️ Skipping duplicate transaction: ${transaction.transactionId} for ${transaction.customerName || transaction.contractName}`);
       return;
@@ -497,19 +494,16 @@ function processInvoicePayments(invoices, transactions) {
       transaction.customerName?.toLowerCase().trim()
     ].filter(Boolean);
     
-    // Find FIRST matching customer key from invoices
     const matchedKey = keys.find(key => invoicesByCustomer[key]);
     
     if (matchedKey) {
-      // Customer has invoices - add transaction only once
       if (!transactionsByCustomer[matchedKey]) {
         transactionsByCustomer[matchedKey] = [];
       }
       transactionsByCustomer[matchedKey].push(transaction);
       processedTransactionIds.add(transactionUniqueId);
     } else {
-      // No matching invoices - still group but prevent duplicates
-      const primaryKey = keys[0]; // Use first available key
+      const primaryKey = keys[0];
       if (primaryKey) {
         if (!transactionsByCustomer[primaryKey]) {
           transactionsByCustomer[primaryKey] = [];
@@ -520,20 +514,17 @@ function processInvoicePayments(invoices, transactions) {
     }
   });
 
-  console.log(`\n💰 Found ${Object.keys(transactionsByCustomer).length} unique customers with transactions (in selected time frame)`);
-  
-  // VERIFICATION: Check for any remaining duplicates
+  // Sort transactions by timestamp (oldest first - FIFO)
   Object.keys(transactionsByCustomer).forEach(customerKey => {
-    const txns = transactionsByCustomer[customerKey];
-    const uniqueTxnIds = new Set(txns.map(t => t.transactionId));
-    
-    if (txns.length !== uniqueTxnIds.size) {
-      console.error(`❌ ERROR: Customer "${customerKey}" still has ${txns.length} transactions but only ${uniqueTxnIds.size} unique IDs!`);
-    }
+    transactionsByCustomer[customerKey].sort((a, b) => {
+      return (a.receivedTimestamp || 0) - (b.receivedTimestamp || 0);
+    });
   });
 
-  // Step 4: Process payments for each customer
-  const processedInvoices = [];
+  console.log(`\n💰 Found ${Object.keys(transactionsByCustomer).length} unique customers with transactions`);
+
+  // Step 4: 🔥 NEW LOGIC - Process transaction-by-transaction
+  const processedPayments = [];
 
   Object.keys(invoicesByCustomer).forEach(customerKey => {
     const customerInvoices = invoicesByCustomer[customerKey];
@@ -542,120 +533,371 @@ function processInvoicePayments(invoices, transactions) {
     console.log(`\n${'='.repeat(80)}`);
     console.log(`💵 PROCESSING: "${customerKey}"`);
     console.log(`${'='.repeat(80)}`);
+    console.log(`   Transactions: ${customerTransactions.length}`);
+    console.log(`   Invoices: ${customerInvoices.length}`);
     
-    // Calculate total money available from this customer's transactions
-    let availableAmount = customerTransactions.reduce((sum, t) => sum + (t.amount || 0), 0);
-    
-    console.log(`   Transactions in selected time frame: ${customerTransactions.length}`);
-    if (customerTransactions.length > 0) {
-      console.log(`   Transaction details:`);
-      customerTransactions.forEach((t, idx) => {
-        console.log(`      ${idx + 1}. ${t.receivedDateTime} | TZS ${t.amount.toLocaleString()} | ID: ${t.transactionId || 'N/A'}`);
+    if (customerTransactions.length === 0) {
+      console.log(`   ⚠️ No transactions found - marking all invoices as UNPAID`);
+      
+      // Mark all invoices as unpaid
+      customerInvoices.forEach(invoice => {
+        processedPayments.push({
+          paymentDate: invoice.invoiceDate,
+          customerName: invoice.customerName,
+          paymentMethod: 'Cash',
+          depositToAccountName: 'Kijichi Collection AC',
+          invoiceNo: invoice.invoiceNumber,
+          journalNo: '',
+          invoiceAmount: invoice.amount,
+          amount: 0,
+          referenceNo: '',
+          memo: '',
+          countryCode: '',
+          exchangeRate: '',
+        });
       });
+      return;
     }
-    console.log(`   💰 TOTAL AVAILABLE: TZS ${availableAmount.toLocaleString()}`);
-    console.log(`   📋 Invoices to pay: ${customerInvoices.length}`);
-    console.log('');
-    
-    // 🔥 NEW: Track the last paid invoice index
-    let lastPaidInvoiceIndex = -1;
-    
-    // Pay invoices in order (newest first)
-    customerInvoices.forEach((invoice, idx) => {
-      const invoiceAmount = invoice.amount;
-      let amountPaid = 0;
+
+    // 🔥 NEW: Track remaining balance for each invoice
+    const invoiceBalances = customerInvoices.map(inv => ({
+      invoice: inv,
+      remainingBalance: inv.amount,
+      fullyPaid: false
+    }));
+
+    let currentInvoiceIndex = 0;
+
+    // Process each transaction one by one
+    customerTransactions.forEach((transaction, txIdx) => {
+      let transactionAmount = transaction.amount;
       
-      // Pay this invoice with available funds
-      if (availableAmount >= invoiceAmount) {
-        // Full payment
-        amountPaid = invoiceAmount;
-        availableAmount -= invoiceAmount;
-        lastPaidInvoiceIndex = idx; // Track this as last paid invoice
-        console.log(`   ✅ Invoice ${idx + 1} (#${invoice.invoiceNumber}): FULLY PAID`);
-        console.log(`      Amount: TZS ${amountPaid.toLocaleString()} / ${invoiceAmount.toLocaleString()}`);
-        console.log(`      Remaining balance: TZS ${availableAmount.toLocaleString()}`);
-      } else if (availableAmount > 0) {
-        // Partial payment
-        amountPaid = availableAmount;
-        availableAmount = 0;
-        lastPaidInvoiceIndex = idx; // Track this as last paid invoice
-        console.log(`   ⚠️  Invoice ${idx + 1} (#${invoice.invoiceNumber}): PARTIALLY PAID`);
-        console.log(`      Amount: TZS ${amountPaid.toLocaleString()} / ${invoiceAmount.toLocaleString()}`);
-        console.log(`      Remaining balance: TZS 0 (DEPLETED)`);
-      } else {
-        // No payment
-        amountPaid = 0;
-        console.log(`   ❌ Invoice ${idx + 1} (#${invoice.invoiceNumber}): UNPAID`);
-        console.log(`      Amount: TZS 0 / ${invoiceAmount.toLocaleString()}`);
-        console.log(`      Remaining balance: TZS 0 (NO FUNDS)`);
+      console.log(`\n   💳 Transaction ${txIdx + 1}/${customerTransactions.length}`);
+      console.log(`      Amount: TZS ${transactionAmount.toLocaleString()}`);
+      console.log(`      Date: ${transaction.receivedDateTime}`);
+      console.log(`      ID: ${transaction.transactionId || 'N/A'}`);
+
+      // Use this transaction to pay invoices
+      while (transactionAmount > 0 && currentInvoiceIndex < invoiceBalances.length) {
+        const currentInvoice = invoiceBalances[currentInvoiceIndex];
+        
+        if (currentInvoice.fullyPaid) {
+          currentInvoiceIndex++;
+          continue;
+        }
+
+        const amountToPay = Math.min(transactionAmount, currentInvoice.remainingBalance);
+        
+        console.log(`      → Paying Invoice #${currentInvoice.invoice.invoiceNumber}`);
+        console.log(`         Remaining balance: TZS ${currentInvoice.remainingBalance.toLocaleString()}`);
+        console.log(`         Paying: TZS ${amountToPay.toLocaleString()}`);
+
+        // Format date as MM-DD-YYYY for QuickBooks
+        let formattedDate = transaction.receivedDateTime || transaction.receivedDate || currentInvoice.invoice.invoiceDate;
+        const dateObj = new Date(formattedDate);
+        if (!isNaN(dateObj.getTime())) {
+          const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+          const day = String(dateObj.getDate()).padStart(2, '0');
+          const year = dateObj.getFullYear();
+          formattedDate = `${month}-${day}-${year}`;
+        }
+
+        // Create payment record for this transaction portion
+        processedPayments.push({
+          paymentDate: formattedDate,
+          customerName: currentInvoice.invoice.customerName,
+          paymentMethod: 'Cash',
+          depositToAccountName: 'Kijichi Collection AC',
+          invoiceNo: currentInvoice.invoice.invoiceNumber,
+          journalNo: '',
+          invoiceAmount: currentInvoice.invoice.amount,
+          amount: amountToPay,
+          referenceNo: '',
+          memo: transaction.transactionId || '',
+          countryCode: '',
+          exchangeRate: '',
+        });
+
+        // Update balances
+        currentInvoice.remainingBalance -= amountToPay;
+        transactionAmount -= amountToPay;
+
+        console.log(`         New balance: TZS ${currentInvoice.remainingBalance.toLocaleString()}`);
+        console.log(`         Transaction remaining: TZS ${transactionAmount.toLocaleString()}`);
+
+        // Mark invoice as fully paid if balance is 0
+        if (currentInvoice.remainingBalance <= 0) {
+          currentInvoice.fullyPaid = true;
+          console.log(`         ✅ Invoice #${currentInvoice.invoice.invoiceNumber} FULLY PAID!`);
+          currentInvoiceIndex++;
+        }
       }
-      
-      // Get the first transaction for payment date reference
-      const matchingTransaction = customerTransactions.length > 0 ? customerTransactions[0] : null;
-      
 
-      // 🔥 Format date as MM-DD-YYYY for QuickBooks
-let formattedDate = invoice.invoiceDate; // Default to invoice date
-if (matchingTransaction?.receivedDateTime) {
-  formattedDate = matchingTransaction.receivedDateTime;
-} else if (matchingTransaction?.receivedDate) {
-  formattedDate = matchingTransaction.receivedDate;
-}
-// Convert to MM-DD-YYYY format if not already
-const dateObj = new Date(formattedDate);
-if (!isNaN(dateObj.getTime())) {
-  const month = String(dateObj.getMonth() + 1).padStart(2, '0');
-  const day = String(dateObj.getDate()).padStart(2, '0');
-  const year = dateObj.getFullYear();
-  formattedDate = `${month}-${day}-${year}`;
-}
-
-processedInvoices.push({
-  paymentDate: formattedDate, // ✅ MM-DD-YYYY format
-  customerName: invoice.customerName, // Will be uppercased during export
-  paymentMethod: 'Cash',
-  depositToAccountName: 'Kijichi Collection AC',
-  invoiceNo: invoice.invoiceNumber,
-  journalNo: '',
-  invoiceAmount: invoiceAmount,
-  amount: amountPaid,
-  referenceNo: '',
-  memo: matchingTransaction?.transactionId || '',
-  countryCode: '',
-  exchangeRate: '',
-});
+      if (transactionAmount > 0) {
+        console.log(`      ⚠️ Transaction has TZS ${transactionAmount.toLocaleString()} remaining (overpayment)`);
+      }
     });
-    
-    // 🔥 NEW: Add any remaining balance to the LAST PAID invoice
-    if (availableAmount > 0 && lastPaidInvoiceIndex >= 0) {
-      console.log(`\n   💰 OVERPAYMENT DETECTED!`);
-      console.log(`      Remaining funds: TZS ${availableAmount.toLocaleString()}`);
-      console.log(`      Adding to last paid invoice (#${customerInvoices[lastPaidInvoiceIndex].invoiceNumber})`);
-      
-      // Find the last paid invoice in processedInvoices and add the remainder
-      const lastPaidInvoiceNo = customerInvoices[lastPaidInvoiceIndex].invoiceNumber;
-      const lastInvoiceRecord = processedInvoices.find(p => p.invoiceNo === lastPaidInvoiceNo);
-      
-      if (lastInvoiceRecord) {
-        const originalAmount = lastInvoiceRecord.amount;
-        lastInvoiceRecord.amount += availableAmount;
-        console.log(`      Updated payment: TZS ${originalAmount.toLocaleString()} → TZS ${lastInvoiceRecord.amount.toLocaleString()}`);
-        console.log(`      ✅ Overpayment of TZS ${availableAmount.toLocaleString()} applied!`);
-        availableAmount = 0;
+
+    // Mark any unpaid invoices
+    invoiceBalances.forEach(invBalance => {
+      if (!invBalance.fullyPaid && invBalance.remainingBalance > 0) {
+        console.log(`   ❌ Invoice #${invBalance.invoice.invoiceNumber} UNPAID - Balance: TZS ${invBalance.remainingBalance.toLocaleString()}`);
+        
+        // Only add unpaid record if no payment was made at all
+        const hasPayment = processedPayments.some(p => p.invoiceNo === invBalance.invoice.invoiceNumber);
+        if (!hasPayment) {
+          processedPayments.push({
+            paymentDate: invBalance.invoice.invoiceDate,
+            customerName: invBalance.invoice.customerName,
+            paymentMethod: 'Cash',
+            depositToAccountName: 'Kijichi Collection AC',
+            invoiceNo: invBalance.invoice.invoiceNumber,
+            journalNo: '',
+            invoiceAmount: invBalance.invoice.amount,
+            amount: 0,
+            referenceNo: '',
+            memo: '',
+            countryCode: '',
+            exchangeRate: '',
+          });
+        }
       }
-    }
+    });
   });
 
   console.log(`\n${'='.repeat(80)}`);
   console.log(`✅ PAYMENT PROCESSING COMPLETED`);
   console.log(`${'='.repeat(80)}`);
-  console.log(`Total invoices processed: ${processedInvoices.length}`);
-  console.log(`Total paid: TZS ${processedInvoices.reduce((sum, p) => sum + p.amount, 0).toLocaleString()}`);
-  console.log(`Total unpaid: ${processedInvoices.filter(p => p.amount === 0).length} invoices`);
+  console.log(`Total payment records: ${processedPayments.length}`);
+  console.log(`Total amount paid: TZS ${processedPayments.reduce((sum, p) => sum + p.amount, 0).toLocaleString()}`);
   console.log(`\n`);
   
-  return processedInvoices;
+  return processedPayments;
 }
+
+
+
+
+// Main payment processing logic - FIXED VERSION (NO DUPLICATES + OVERPAYMENT)
+// function processInvoicePayments(invoices, transactions) {
+//   console.log('\n========================================');
+//   console.log('=== PAYMENT PROCESSING STARTED ===');
+//   console.log('========================================');
+//   console.log('📋 Invoices to process:', invoices.length);
+//   console.log('💵 Transactions available (WITHIN TIME FRAME):', transactions.length);
+  
+//   // Step 1: Group invoices by customer (by phone or name)
+//   const invoicesByCustomer = {};
+  
+//   invoices.forEach(invoice => {
+//     const key = invoice.customerPhone || invoice.customerName.toLowerCase().trim();
+//     if (!invoicesByCustomer[key]) {
+//       invoicesByCustomer[key] = [];
+//     }
+//     invoicesByCustomer[key].push(invoice);
+//   });
+
+//   console.log(`\n👥 Found ${Object.keys(invoicesByCustomer).length} unique customers with invoices`);
+
+//   // Step 2: Sort each customer's invoices by date (DESCENDING - newest/last invoice first)
+//   Object.keys(invoicesByCustomer).forEach(customerKey => {
+//     invoicesByCustomer[customerKey].sort((a, b) => {
+//       // Sort by date descending (newest first)
+//       const dateCompare = new Date(b.invoiceDate) - new Date(a.invoiceDate);
+//       if (dateCompare !== 0) return dateCompare;
+//       // If same date, sort by invoice number descending
+//       return b.invoiceNumber.localeCompare(a.invoiceNumber);
+//     });
+    
+//     console.log(`\n📋 Customer: "${customerKey}"`);
+//     console.log(`   Total invoices: ${invoicesByCustomer[customerKey].length}`);
+//     console.log('   Invoices sorted (NEWEST → OLDEST):');
+//     invoicesByCustomer[customerKey].forEach((inv, idx) => {
+//       console.log(`      ${idx + 1}. Invoice #${inv.invoiceNumber} | Date: ${inv.invoiceDate} | Amount: TZS ${inv.amount.toLocaleString()}`);
+//     });
+//   });
+
+//   // Step 3: Group transactions by customer - FIXED TO PREVENT DUPLICATES
+//   const transactionsByCustomer = {};
+//   const processedTransactionIds = new Set();
+  
+//   transactions.forEach(transaction => {
+//     if (!transaction.amount) return;
+    
+//     // Create unique identifier for this transaction
+//     const transactionUniqueId = `${transaction.transactionId || transaction.id}_${transaction.receivedTimestamp}_${transaction.amount}`;
+    
+//     // Skip if we've already processed this exact transaction
+//     if (processedTransactionIds.has(transactionUniqueId)) {
+//       console.warn(`⚠️ Skipping duplicate transaction: ${transaction.transactionId} for ${transaction.customerName || transaction.contractName}`);
+//       return;
+//     }
+    
+//     const keys = [
+//       transaction.customerPhone,
+//       transaction.contractName?.toLowerCase().trim(),
+//       transaction.customerName?.toLowerCase().trim()
+//     ].filter(Boolean);
+    
+//     // Find FIRST matching customer key from invoices
+//     const matchedKey = keys.find(key => invoicesByCustomer[key]);
+    
+//     if (matchedKey) {
+//       // Customer has invoices - add transaction only once
+//       if (!transactionsByCustomer[matchedKey]) {
+//         transactionsByCustomer[matchedKey] = [];
+//       }
+//       transactionsByCustomer[matchedKey].push(transaction);
+//       processedTransactionIds.add(transactionUniqueId);
+//     } else {
+//       // No matching invoices - still group but prevent duplicates
+//       const primaryKey = keys[0]; // Use first available key
+//       if (primaryKey) {
+//         if (!transactionsByCustomer[primaryKey]) {
+//           transactionsByCustomer[primaryKey] = [];
+//         }
+//         transactionsByCustomer[primaryKey].push(transaction);
+//         processedTransactionIds.add(transactionUniqueId);
+//       }
+//     }
+//   });
+
+//   console.log(`\n💰 Found ${Object.keys(transactionsByCustomer).length} unique customers with transactions (in selected time frame)`);
+  
+//   // VERIFICATION: Check for any remaining duplicates
+//   Object.keys(transactionsByCustomer).forEach(customerKey => {
+//     const txns = transactionsByCustomer[customerKey];
+//     const uniqueTxnIds = new Set(txns.map(t => t.transactionId));
+    
+//     if (txns.length !== uniqueTxnIds.size) {
+//       console.error(`❌ ERROR: Customer "${customerKey}" still has ${txns.length} transactions but only ${uniqueTxnIds.size} unique IDs!`);
+//     }
+//   });
+
+//   // Step 4: Process payments for each customer
+//   const processedInvoices = [];
+
+//   Object.keys(invoicesByCustomer).forEach(customerKey => {
+//     const customerInvoices = invoicesByCustomer[customerKey];
+//     const customerTransactions = transactionsByCustomer[customerKey] || [];
+    
+//     console.log(`\n${'='.repeat(80)}`);
+//     console.log(`💵 PROCESSING: "${customerKey}"`);
+//     console.log(`${'='.repeat(80)}`);
+    
+//     // Calculate total money available from this customer's transactions
+//     let availableAmount = customerTransactions.reduce((sum, t) => sum + (t.amount || 0), 0);
+    
+//     console.log(`   Transactions in selected time frame: ${customerTransactions.length}`);
+//     if (customerTransactions.length > 0) {
+//       console.log(`   Transaction details:`);
+//       customerTransactions.forEach((t, idx) => {
+//         console.log(`      ${idx + 1}. ${t.receivedDateTime} | TZS ${t.amount.toLocaleString()} | ID: ${t.transactionId || 'N/A'}`);
+//       });
+//     }
+//     console.log(`   💰 TOTAL AVAILABLE: TZS ${availableAmount.toLocaleString()}`);
+//     console.log(`   📋 Invoices to pay: ${customerInvoices.length}`);
+//     console.log('');
+    
+//     // 🔥 NEW: Track the last paid invoice index
+//     let lastPaidInvoiceIndex = -1;
+    
+//     // Pay invoices in order (newest first)
+//     customerInvoices.forEach((invoice, idx) => {
+//       const invoiceAmount = invoice.amount;
+//       let amountPaid = 0;
+      
+//       // Pay this invoice with available funds
+//       if (availableAmount >= invoiceAmount) {
+//         // Full payment
+//         amountPaid = invoiceAmount;
+//         availableAmount -= invoiceAmount;
+//         lastPaidInvoiceIndex = idx; // Track this as last paid invoice
+//         console.log(`   ✅ Invoice ${idx + 1} (#${invoice.invoiceNumber}): FULLY PAID`);
+//         console.log(`      Amount: TZS ${amountPaid.toLocaleString()} / ${invoiceAmount.toLocaleString()}`);
+//         console.log(`      Remaining balance: TZS ${availableAmount.toLocaleString()}`);
+//       } else if (availableAmount > 0) {
+//         // Partial payment
+//         amountPaid = availableAmount;
+//         availableAmount = 0;
+//         lastPaidInvoiceIndex = idx; // Track this as last paid invoice
+//         console.log(`   ⚠️  Invoice ${idx + 1} (#${invoice.invoiceNumber}): PARTIALLY PAID`);
+//         console.log(`      Amount: TZS ${amountPaid.toLocaleString()} / ${invoiceAmount.toLocaleString()}`);
+//         console.log(`      Remaining balance: TZS 0 (DEPLETED)`);
+//       } else {
+//         // No payment
+//         amountPaid = 0;
+//         console.log(`   ❌ Invoice ${idx + 1} (#${invoice.invoiceNumber}): UNPAID`);
+//         console.log(`      Amount: TZS 0 / ${invoiceAmount.toLocaleString()}`);
+//         console.log(`      Remaining balance: TZS 0 (NO FUNDS)`);
+//       }
+      
+//       // Get the first transaction for payment date reference
+//       const matchingTransaction = customerTransactions.length > 0 ? customerTransactions[0] : null;
+      
+
+//       // 🔥 Format date as MM-DD-YYYY for QuickBooks
+// let formattedDate = invoice.invoiceDate; // Default to invoice date
+// if (matchingTransaction?.receivedDateTime) {
+//   formattedDate = matchingTransaction.receivedDateTime;
+// } else if (matchingTransaction?.receivedDate) {
+//   formattedDate = matchingTransaction.receivedDate;
+// }
+// // Convert to MM-DD-YYYY format if not already
+// const dateObj = new Date(formattedDate);
+// if (!isNaN(dateObj.getTime())) {
+//   const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+//   const day = String(dateObj.getDate()).padStart(2, '0');
+//   const year = dateObj.getFullYear();
+//   formattedDate = `${month}-${day}-${year}`;
+// }
+
+// processedInvoices.push({
+//   paymentDate: formattedDate, // ✅ MM-DD-YYYY format
+//   customerName: invoice.customerName, // Will be uppercased during export
+//   paymentMethod: 'Cash',
+//   depositToAccountName: 'Kijichi Collection AC',
+//   invoiceNo: invoice.invoiceNumber,
+//   journalNo: '',
+//   invoiceAmount: invoiceAmount,
+//   amount: amountPaid,
+//   referenceNo: '',
+//   memo: matchingTransaction?.transactionId || '',
+//   countryCode: '',
+//   exchangeRate: '',
+// });
+//     });
+    
+//     // 🔥 NEW: Add any remaining balance to the LAST PAID invoice
+//     if (availableAmount > 0 && lastPaidInvoiceIndex >= 0) {
+//       console.log(`\n   💰 OVERPAYMENT DETECTED!`);
+//       console.log(`      Remaining funds: TZS ${availableAmount.toLocaleString()}`);
+//       console.log(`      Adding to last paid invoice (#${customerInvoices[lastPaidInvoiceIndex].invoiceNumber})`);
+      
+//       // Find the last paid invoice in processedInvoices and add the remainder
+//       const lastPaidInvoiceNo = customerInvoices[lastPaidInvoiceIndex].invoiceNumber;
+//       const lastInvoiceRecord = processedInvoices.find(p => p.invoiceNo === lastPaidInvoiceNo);
+      
+//       if (lastInvoiceRecord) {
+//         const originalAmount = lastInvoiceRecord.amount;
+//         lastInvoiceRecord.amount += availableAmount;
+//         console.log(`      Updated payment: TZS ${originalAmount.toLocaleString()} → TZS ${lastInvoiceRecord.amount.toLocaleString()}`);
+//         console.log(`      ✅ Overpayment of TZS ${availableAmount.toLocaleString()} applied!`);
+//         availableAmount = 0;
+//       }
+//     }
+//   });
+
+//   console.log(`\n${'='.repeat(80)}`);
+//   console.log(`✅ PAYMENT PROCESSING COMPLETED`);
+//   console.log(`${'='.repeat(80)}`);
+//   console.log(`Total invoices processed: ${processedInvoices.length}`);
+//   console.log(`Total paid: TZS ${processedInvoices.reduce((sum, p) => sum + p.amount, 0).toLocaleString()}`);
+//   console.log(`Total unpaid: ${processedInvoices.filter(p => p.amount === 0).length} invoices`);
+//   console.log(`\n`);
+  
+//   return processedInvoices;
+// }
 
 
 
