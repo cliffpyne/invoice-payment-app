@@ -9,7 +9,7 @@ This system **automatically matches customer payments to their invoices** by:
 4. Generating a CSV ready for QuickBooks import
 
 ---
-
+/
 ## 🧮 Payment Matching Logic (How It Works)
 
 ### Step-by-Step Process:
